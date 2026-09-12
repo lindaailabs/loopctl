@@ -79,6 +79,7 @@ loopctl stats                                   # 汇总：成功率/介入/成�
 loopctl resume <task-id>                        # 恢复中断/升级的任务
 loopctl init <slug> [--display-name] [--engine] [--git-remote] [--gitlab-project-id] [--default-branch] [--test-cmd] [--spec-refs ...] [--repo-path]   # 注册项目（M4；slug 为 [A-Za-z0-9_-]）
 loopctl engines                                 # 列出已注册引擎及其实现状态（M4）
+loopctl doctor --project <slug>                 # 运行前检查路径、引擎、测试与 GitLab
 loopctl mr <task-id>                            # 查看任务对应的 GitLab MR url（M2）
 loopctl serve [--concurrency N] [--watch]       # 后台监督器：执行队列中的任务（M3）
 ```
@@ -181,7 +182,8 @@ loopctl/                         # 工具仓库（本仓库，公开）
 └─ data/                        # gitignore！本机运行时数据
    ├─ loopctl.db                # checkpoint + 任务状态
    ├─ traces/<task-id>.jsonl
-   └─ stats.jsonl
+   ├─ stats.jsonl
+   └─ reports/                 # playbook 写入失败时的报告暂存
 
 playbook/                        # 知识仓库（私有）
 ├─ projects/<slug>/project.toml
@@ -278,6 +280,7 @@ Python ≥ 3.11 · uv · asyncio · typer + rich · langgraph（含 SqliteSaver 
 - [x] `stats` 汇总报表（按项目分组）
 - **验收**：2+ 项目 3+ 任务同时发起，并行推进无冲突；同项目两任务串行（以 fake engine 单测覆盖并发与项目互斥；真机并行需在具备 `claude` 的环境执行）。
 - 注：`resume` 断点恢复已在 M1 落地（`checkpoints.sqlite` + `loopctl resume`）。
+- checkpoint 按任务隔离为 `data/checkpoints/<task-id>.sqlite`，避免跨项目执行互相阻塞。
 
 ### M4 工具内低风险增强（in-tool hardening）
 

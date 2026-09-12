@@ -62,6 +62,8 @@ class ClaudeCodeBackend:
 
         watchdog = asyncio.create_task(_watchdog())
         assert proc.stdout is not None
+        assert proc.stderr is not None
+        stderr_task = asyncio.create_task(proc.stderr.read())
         try:
             async for raw in proc.stdout:
                 last_output[0] = time.monotonic()
@@ -79,11 +81,14 @@ class ClaudeCodeBackend:
                 watchdog.cancel()
             else:
                 await watchdog
+        stderr = (await stderr_task).decode("utf-8", "replace").strip()
 
         if exceeded:
             raise EngineError(exceeded["kind"], "claude subprocess timed out")
 
         summary = "\n".join(text_parts).strip()
+        if proc.returncode != 0 and stderr:
+            summary = f"{summary}\n{stderr}".strip()
         branch = await self._git_branch(ctx.workdir)
         changed = await self._git_changed(ctx.workdir)
         return EngineResult(

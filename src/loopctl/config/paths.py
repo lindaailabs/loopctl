@@ -23,10 +23,31 @@ def projects_root() -> Path:
     fixtures directory during development.
     """
     env = os.environ.get("LOOPCTL_PROJECTS_ROOT")
-    return Path(env) if env else (Path.cwd() / "playbook" / "projects")
+    return Path(env) if env else (playbook_root() / "projects")
 
 
 def local_projects_dir() -> Path:
     """Directory for machine-local override files (~/.loopctl/projects)."""
     env = os.environ.get("LOOPCTL_LOCAL_PROJECTS_DIR")
     return Path(env) if env else (Path.home() / ".loopctl" / "projects")
+
+
+def playbook_root() -> Path:
+    """Root of the private knowledge repository."""
+    env = os.environ.get("LOOPCTL_PLAYBOOK_ROOT")
+    if env:
+        return Path(env)
+    sibling = Path.cwd().parent / "playbook"
+    return sibling if sibling.is_dir() else (Path.cwd() / "playbook")
+
+
+def runs_root() -> Path:
+    """Directory for reviewable task reports in the private playbook."""
+    env = os.environ.get("LOOPCTL_RUNS_ROOT")
+    if env:
+        return Path(env)
+    projects_env = os.environ.get("LOOPCTL_PROJECTS_ROOT")
+    if projects_env:
+        projects = Path(projects_env)
+        return projects.parent / "runs" if projects.name == "projects" else projects / "runs"
+    return playbook_root() / "runs"

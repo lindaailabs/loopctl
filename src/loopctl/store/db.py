@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-from loopctl.models.task import Task
+from loopctl.models.task import Task, TaskState
 
 
 class TaskStore:
@@ -41,8 +42,47 @@ class TaskStore:
         rows = self.conn.execute("SELECT data FROM tasks ORDER BY id").fetchall()
         return [Task.model_validate_json(r[0]) for r in rows]
 
+    def claim_queued(self, task_id: str) -> Task | None:
+        """Atomically claim a queued task across supervisor processes."""
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.conn.execute(
+                "SELECT data FROM tasks WHERE id = ? AND state = ?",
+                (task_id, TaskState.queued.value),
+            ).fetchone()
+            if not row:
+                self.conn.rollback()
+                return None
+            task = Task.model_validate_json(row[0])
+            task.state = TaskState.clarifying
+            task.updated_at = datetime.now(UTC)
+            task.last_event = "dequeued"
+            cursor = self.conn.execute(
+                "UPDATE tasks SET state = ?, data = ? WHERE id = ? AND state = ?",
+                (
+                    task.state.value,
+                    task.model_dump_json(),
+                    task.id,
+                    TaskState.queued.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                self.conn.rollback()
+                return None
+            self.conn.commit()
+            return task
+        except Exception:
+            self.conn.rollback()
+            raise
+
     def close(self) -> None:
         self.conn.close()
+
+    def __enter__(self) -> TaskStore:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
 
 
 def get_checkpointer(db_path: Path) -> AsyncSqliteSaver:

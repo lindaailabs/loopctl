@@ -45,7 +45,9 @@ class RecEngine:
         self.max_active = max(self.max_active, self.active)
         self.shared["n"] += 1
         self.shared["max"] = max(self.shared["max"], self.shared["n"])
-        await asyncio.sleep(0.03)
+        if self.shared["n"] >= 2:
+            self.shared["release"].set()
+        await asyncio.wait_for(self.shared["release"].wait(), timeout=2)
         self.active -= 1
         self.shared["n"] -= 1
         return EngineResult(
@@ -64,11 +66,15 @@ def _write_project(root: Path, slug: str) -> None:
     (root / slug / "project.toml").write_text(
         f'slug = "{slug}"\n'
         f'display_name = "{slug}"\n'
-        f'engine = "claude_code"\n'
+        f'engine = "fake"\n'
         f'default_branch = "main"\n'
         f'test_cmd = "python -c \\"pass\\""\n',
         encoding="utf-8",
     )
+
+    with (root / slug / "project.toml").open("a", encoding="utf-8") as config:
+        config.write('spec_refs = ["spec.md"]\n')
+    (root / slug / "spec.md").write_text(f"SPEC FOR {slug}", encoding="utf-8")
 
 
 def _make_build(projects_root: Path, data_dir: Path, engines: dict, gitlab: FakeGitLab) -> Any:
@@ -99,7 +105,7 @@ def test_supervisor_parallel_and_project_mutex(monkeypatch: Any, tmp_path: Path)
     monkeypatch.setenv("LOOPCTL_PROJECTS_ROOT", str(projects_root))
     monkeypatch.setenv("LOOPCTL_DATA_DIR", str(data_dir))
 
-    shared: dict[str, int] = {"n": 0, "max": 0}
+    shared: dict[str, Any] = {"n": 0, "max": 0, "release": asyncio.Event()}
     engines = {"A": RecEngine(shared), "B": RecEngine(shared)}
     gitlab = FakeGitLab()
     build = _make_build(projects_root, data_dir, engines, gitlab)
@@ -121,6 +127,7 @@ def test_supervisor_parallel_and_project_mutex(monkeypatch: Any, tmp_path: Path)
         task = TaskStore(data_dir / "loopctl.db").get(tid)
         assert task is not None
         assert task.state is TaskState.awaiting_plan_approval
+        assert task.spec == f"# spec.md\n\nSPEC FOR {task.project}"
     # Cross-project parallelism observed (A and B overlapped at least once).
     assert shared["max"] >= 2
     # Project-internal mutex: no project ever had two tasks active at once.
@@ -135,7 +142,8 @@ def test_serve_drains_queue(monkeypatch: Any, tmp_path: Path) -> None:
     monkeypatch.setenv("LOOPCTL_PROJECTS_ROOT", str(projects_root))
     monkeypatch.setenv("LOOPCTL_DATA_DIR", str(data_dir))
 
-    shared: dict[str, int] = {"n": 0, "max": 0}
+    shared: dict[str, Any] = {"n": 0, "max": 0, "release": asyncio.Event()}
+    shared["release"].set()
     engines = {"A": RecEngine(shared)}
     gitlab = FakeGitLab()
     build = _make_build(projects_root, data_dir, engines, gitlab)

@@ -13,6 +13,7 @@ exercised in tests without network or the `claude` binary.
 from __future__ import annotations
 
 import asyncio
+from collections import defaultdict
 from collections.abc import Callable
 from uuid import uuid4
 
@@ -56,8 +57,10 @@ class Supervisor:
         # Fall back to a direct Workflow build when no factory was supplied.
         from loopctl.config import paths
         from loopctl.config.loader import load_project  # local import avoids cycle
+        from loopctl.config.validation import require_runtime
 
         cfg = load_project(project_slug, root=paths.projects_root())
+        require_runtime(cfg)
         return Workflow(
             project=cfg,
             data_dir=paths.data_dir(),
@@ -65,6 +68,7 @@ class Supervisor:
             engine=self.engine,
             notifier=self.notifier,
             gitlab=self.gitlab,
+            runs_dir=paths.runs_root(),
         )
 
     async def run_task(self, task_id: str) -> None:
@@ -81,7 +85,8 @@ class Supervisor:
         from loopctl.config import paths
         from loopctl.store.db import TaskStore
 
-        return TaskStore(paths.data_dir() / "loopctl.db").get(task_id)
+        with TaskStore(paths.data_dir() / "loopctl.db") as store:
+            return store.get(task_id)
 
     async def serve(self, *, stop_when_idle: bool = True, poll_s: float = 1.0) -> int:
         """Run queued tasks until idle (or forever in watch mode).
@@ -97,16 +102,28 @@ class Supervisor:
                 await asyncio.sleep(poll_s)
                 continue
             executed += len(queued)
-            await asyncio.gather(*(self.run_task(t.id) for t in queued))
-            if stop_when_idle:
-                return executed
-            await asyncio.sleep(poll_s)
+            by_project: dict[str, list[Task]] = defaultdict(list)
+            for task in queued:
+                by_project[task.project].append(task)
+            workflows = {project: self._build(project) for project in by_project}
+
+            async def run_project(workflow: Workflow, tasks: list[Task]) -> None:
+                for task in tasks:
+                    async with self._semaphore:
+                        await workflow.run_queued(task.id)
+
+            await asyncio.gather(
+                *(run_project(workflows[project], tasks) for project, tasks in by_project.items())
+            )
+            if not stop_when_idle:
+                await asyncio.sleep(poll_s)
 
     def _list_tasks(self) -> list[Task]:
         from loopctl.config import paths
         from loopctl.store.db import TaskStore
 
-        return TaskStore(paths.data_dir() / "loopctl.db").list_all()
+        with TaskStore(paths.data_dir() / "loopctl.db") as store:
+            return store.list_all()
 
 
 def new_task_id(slug: str) -> str:

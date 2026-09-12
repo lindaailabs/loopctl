@@ -22,21 +22,32 @@ specification and `docs/decisions/` for the architecture decision records.
 # Install (uv manages the environment)
 uv sync
 
+# Point to the private knowledge repository; optional for a sibling checkout
+export LOOPCTL_PLAYBOOK_ROOT=/path/to/playbook
+
 # Show the task board (empty before any task exists)
 uv run loopctl status
 
 # List registered projects
 uv run loopctl projects
 
-# Register a new project (writes project.toml + a spec.md stub under your playbook)
-uv run loopctl init my-project --repo-path /path/to/repo
+# Register and validate a real project
+uv run loopctl init my-project --repo-path /path/to/repo \
+  --test-cmd "pytest -q" --gitlab-project-id 12345
+uv run loopctl doctor --project my-project
 
 # List the available execution engines
 uv run loopctl engines
 ```
 
+For a first, fully offline verification, initialize with `--engine fake`. The
+fake engine and dry-run MR client exercise both approval gates without touching
+a source repository or the network. Real runs require a clean git worktree and
+create a protected `loopctl/<task-id>` branch before the coding engine starts.
+
 Machine-specific configuration (repository paths, tokens, GitLab IDs) is injected
 through configuration files and environment variables and is **never** committed.
+Set `GITLAB_TOKEN` before a real run.
 See `docs/SPEC.md` §6 for the configuration model.
 
 ## Development

@@ -124,7 +124,8 @@ def test_full_loop_reaches_done(tmp_data_dir) -> None:
     task = wf.store.get(tid)
     assert task.state is TaskState.done
     assert task.mr_url is not None
-    assert (tmp_data_dir / "reports" / f"{tid}.md").exists()
+    reports = list((tmp_data_dir / "reports").glob(f"*/{tid}-report.md"))
+    assert len(reports) == 1
     assert eng.calls >= 2  # planning + executing
 
 

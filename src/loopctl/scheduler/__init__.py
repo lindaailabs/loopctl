@@ -13,6 +13,7 @@ from typing import Any
 
 from loopctl.config import paths
 from loopctl.config.loader import load_project
+from loopctl.config.validation import require_runtime, runtime_issues
 from loopctl.graph.workflow import Workflow
 from loopctl.integrations.gitlab import GitLabClient
 from loopctl.knowledge.spec import load_spec
@@ -34,6 +35,8 @@ def build(
     gitlab: GitLabClient | None = None,
 ) -> Workflow:
     cfg = load_project(project_slug, root=paths.projects_root())
+    if engine is None and gitlab is None:
+        require_runtime(cfg)
     return Workflow(
         project=cfg,
         data_dir=paths.data_dir(),
@@ -41,14 +44,15 @@ def build(
         engine=engine,
         notifier=notifier,
         gitlab=gitlab,
+        runs_dir=paths.runs_root(),
     )
 
 
 def _workflow_for_task(
     task_id: str, *, engine=None, notifier=None, gitlab: GitLabClient | None = None
 ) -> Workflow:
-    store = TaskStore(_db_path())
-    task = store.get(task_id)
+    with TaskStore(_db_path()) as store:
+        task = store.get(task_id)
     if task is None:
         raise ValueError(f"unknown task: {task_id}")
     return build(task.project, engine=engine, notifier=notifier, gitlab=gitlab)
@@ -71,6 +75,7 @@ async def start(
 def enqueue(requirement: str, project_slug: str, base: str | None = None) -> str:
     """Register a task in the ``queued`` state for the background supervisor (SPEC §8 M3)."""
     cfg = load_project(project_slug, root=paths.projects_root())
+    require_runtime(cfg)
     task = Task(
         id=new_task_id(cfg.slug),
         project=cfg.slug,
@@ -78,9 +83,10 @@ def enqueue(requirement: str, project_slug: str, base: str | None = None) -> str
         base_branch=base or cfg.default_branch,
         engine=cfg.engine,
         state=TaskState.queued,
-        spec=load_spec(Path(cfg.repo_path or "."), cfg.spec_refs),
+        spec=load_spec(Path(cfg.knowledge_path or "."), cfg.spec_refs),
     )
-    TaskStore(_db_path()).save(task)
+    with TaskStore(_db_path()) as store:
+        store.save(task)
     return task.id
 
 
@@ -93,6 +99,11 @@ def serve(*, concurrency: int = 2, watch: bool = False) -> int:
 async def approve(
     task_id: str, *, engine=None, notifier=None, gitlab: GitLabClient | None = None
 ) -> None:
+    task = get_task(task_id)
+    if task is None:
+        raise ValueError(f"unknown task: {task_id}")
+    if task.state not in {TaskState.awaiting_plan_approval, TaskState.awaiting_pr_review}:
+        raise ValueError(f"task {task_id} cannot be approved from state {task.state.value}")
     await _workflow_for_task(task_id, engine=engine, notifier=notifier, gitlab=gitlab).approve(
         task_id
     )
@@ -101,6 +112,11 @@ async def approve(
 async def reject(
     task_id: str, feedback: str, *, engine=None, notifier=None, gitlab: GitLabClient | None = None
 ) -> None:
+    task = get_task(task_id)
+    if task is None:
+        raise ValueError(f"unknown task: {task_id}")
+    if task.state is not TaskState.awaiting_plan_approval:
+        raise ValueError(f"task {task_id} cannot be rejected from state {task.state.value}")
     await _workflow_for_task(task_id, engine=engine, notifier=notifier, gitlab=gitlab).reject(
         task_id, feedback
     )
@@ -109,17 +125,28 @@ async def reject(
 async def resume(
     task_id: str, *, engine=None, notifier=None, gitlab: GitLabClient | None = None
 ) -> None:
+    task = get_task(task_id)
+    if task is None:
+        raise ValueError(f"unknown task: {task_id}")
+    if task.state not in {
+        TaskState.awaiting_plan_approval,
+        TaskState.awaiting_pr_review,
+        TaskState.escalated,
+    }:
+        raise ValueError(f"task {task_id} cannot be resumed from state {task.state.value}")
     await _workflow_for_task(task_id, engine=engine, notifier=notifier, gitlab=gitlab).resume(
         task_id
     )
 
 
 def list_tasks() -> list[Task]:
-    return TaskStore(_db_path()).list_all()
+    with TaskStore(_db_path()) as store:
+        return store.list_all()
 
 
 def get_task(task_id: str) -> Task | None:
-    return TaskStore(_db_path()).get(task_id)
+    with TaskStore(_db_path()) as store:
+        return store.get(task_id)
 
 
 def mr_url(task_id: str) -> str | None:
@@ -153,3 +180,16 @@ def list_projects() -> list[dict[str, str]]:
                 continue
             out.append({"slug": cfg.slug, "display_name": cfg.display_name, "engine": cfg.engine})
     return out
+
+
+def doctor(project_slug: str) -> dict[str, Any]:
+    cfg = load_project(project_slug, root=paths.projects_root())
+    issues = runtime_issues(cfg)
+    return {
+        "project": cfg.slug,
+        "ready": not issues,
+        "issues": issues,
+        "repo_path": cfg.repo_path,
+        "knowledge_path": cfg.knowledge_path,
+        "runs_root": str(paths.runs_root()),
+    }

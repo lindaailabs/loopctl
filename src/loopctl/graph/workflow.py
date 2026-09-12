@@ -27,6 +27,7 @@ from loopctl.engines import get_engine
 from loopctl.engines.base import EngineBackend, EngineContext, EngineError
 from loopctl.graph.state import GraphState
 from loopctl.integrations.gitlab import (
+    DryRunGitLabClient,
     GitLabClient,
     GitLabError,
     HttpGitLabClient,
@@ -59,15 +60,24 @@ class Workflow:
         engine: EngineBackend | None = None,
         notifier: Notifier | None = None,
         gitlab: GitLabClient | None = None,
+        runs_dir: Path | None = None,
     ) -> None:
         self.project = project
         self.data_dir = data_dir
         self.db_path = db_path
         self.engine: EngineBackend = engine or get_engine(self.project.engine)
         self.notifier: Notifier = notifier or ntfy_notify
-        self.gitlab: GitLabClient = gitlab or HttpGitLabClient()
+        self.gitlab: GitLabClient = gitlab or (
+            DryRunGitLabClient()
+            if self.engine.name == "fake"
+            else HttpGitLabClient(
+                retry_max=project.limits.mr_api_retry_max,
+                backoff_base_s=project.limits.backoff_base_s,
+                backoff_max_s=project.limits.backoff_max_s,
+            )
+        )
+        self.runs_dir = runs_dir or (data_dir / "reports")
         self.store = TaskStore(db_path)
-        self.checkpoint_path = self.data_dir / "checkpoints.sqlite"
         self.builder = self._build()
 
     # ----- public API -----------------------------------------------------
@@ -80,12 +90,12 @@ class Workflow:
             requirement=requirement,
             base_branch=base,
             engine=self.project.engine,
-            spec=load_spec(Path(self.project.repo_path or "."), self.project.spec_refs),
+            spec=load_spec(Path(self.project.knowledge_path or "."), self.project.spec_refs),
         )
         self.store.save(task)
         self._trace(task.id).write({"state": task.state.value, "event": "created"})
-        async with self._compiled() as graph:
-            await graph.ainvoke({"task": task.model_dump()}, self._config(task.id))
+        async with self._compiled(task.id) as graph:
+            await graph.ainvoke({"task": task.model_dump(mode="json")}, self._config(task.id))
         return task.id
 
     async def run_queued(self, task_id: str) -> None:
@@ -94,13 +104,12 @@ class Workflow:
         Used by the background supervisor (SPEC §8 M3); the task already exists in the
         store with its requirement and spec populated.
         """
-        task = self.store.get(task_id)
+        task = self.store.claim_queued(task_id)
         if task is None:
-            raise ValueError(f"unknown task: {task_id}")
-        task.state = TaskState.clarifying
-        self._persist(task, "dequeued")
-        async with self._compiled() as graph:
-            await graph.ainvoke({"task": task.model_dump()}, self._config(task_id))
+            return
+        self._trace(task.id).write({"state": task.state.value, "event": "dequeued"})
+        async with self._compiled(task_id) as graph:
+            await graph.ainvoke({"task": task.model_dump(mode="json")}, self._config(task_id))
 
     async def approve(self, task_id: str) -> None:
         await self._resume(task_id, {"action": "approve"})
@@ -109,7 +118,7 @@ class Workflow:
         await self._resume(task_id, {"action": "reject", "feedback": feedback})
 
     async def resume(self, task_id: str) -> None:
-        async with self._compiled() as graph:
+        async with self._compiled(task_id) as graph:
             config = self._config(task_id)
             snapshot = await graph.aget_state(config)
             if snapshot.next:  # paused at an interrupt (plan or pr gate)
@@ -123,10 +132,10 @@ class Workflow:
                 task.failure_class = None
                 self.store.save(task)
             # Continue from the last checkpoint (e.g. after a Ctrl-C mid-node).
-            await graph.ainvoke({"task": task.model_dump()}, config)
+            await graph.ainvoke({"task": task.model_dump(mode="json")}, config)
 
     async def _resume(self, task_id: str, payload: dict) -> None:
-        async with self._compiled() as graph:
+        async with self._compiled(task_id) as graph:
             await graph.ainvoke(Command(resume=payload), self._config(task_id))
 
     # ----- node implementations -------------------------------------------
@@ -135,7 +144,11 @@ class Workflow:
         task = self._task(state)
         task.state = TaskState.clarifying
         self._persist(task, "clarifying: no ambiguities, proceed")
-        return {"task": task.model_dump()}
+        try:
+            await self._prepare_workspace(task)
+        except EngineError as exc:
+            return self._fail(task, exc.kind)
+        return {"task": task.model_dump(mode="json")}
 
     async def planning(self, state: dict) -> dict:
         task = self._task(state)
@@ -146,13 +159,15 @@ class Workflow:
             result = await self.engine.execute(self._ctx(task, ""), prompt)
         except EngineError as exc:
             return self._fail(task, exc.kind)
+        if not result.success:
+            return self._fail(task, "engine_error")
         task.plan = Plan(goal=result.stdout_summary or "plan", changed_files=result.changed_files)
         task.tokens += result.tokens
         task.cost_usd += result.cost_usd
         if task.cost_usd > self._limits().budget_usd:
             return self._fail(task, "budget_exceeded")
         self._persist(task, "plan generated")
-        return {"task": task.model_dump()}
+        return {"task": task.model_dump(mode="json")}
 
     async def plan_gate(self, state: dict) -> dict:
         task = self._task(state)
@@ -166,7 +181,7 @@ class Workflow:
         else:
             task.feedback = None
         self._persist(task, f"plan gate resolved: {action}")
-        return {"task": task.model_dump()}
+        return {"task": task.model_dump(mode="json")}
 
     async def executing(self, state: dict) -> dict:
         task = self._task(state)
@@ -182,16 +197,18 @@ class Workflow:
                 task.exec_retries += 1
                 task.pending_retry = True
                 self._persist(task, f"engine_timeout retry {task.exec_retries}")
-                return {"task": task.model_dump()}
+                return {"task": task.model_dump(mode="json")}
             return self._fail(task, exc.kind)
-        task.branch = result.branch or task.branch
+        if not result.success:
+            return self._fail(task, "engine_error")
+        task.branch = task.branch or result.branch
         task.changed_files = result.changed_files
         task.tokens += result.tokens
         task.cost_usd += result.cost_usd
         if task.cost_usd > self._limits().budget_usd:
             return self._fail(task, "budget_exceeded")
         self._persist(task, "executing complete")
-        return {"task": task.model_dump()}
+        return {"task": task.model_dump(mode="json")}
 
     async def testing(self, state: dict) -> dict:
         task = self._task(state)
@@ -205,7 +222,7 @@ class Workflow:
             task.test_failure = output
             task.state = TaskState.fixing
             self._persist(task, "tests failed")
-        return {"task": task.model_dump()}
+        return {"task": task.model_dump(mode="json")}
 
     async def fixing(self, state: dict) -> dict:
         task = self._task(state)
@@ -223,8 +240,10 @@ class Workflow:
                 task.exec_retries += 1
                 task.pending_retry = True
                 self._persist(task, f"engine_timeout retry {task.exec_retries}")
-                return {"task": task.model_dump()}
+                return {"task": task.model_dump(mode="json")}
             return self._fail(task, exc.kind)
+        if not result.success:
+            return self._fail(task, "engine_error")
         task.tokens += result.tokens
         task.cost_usd += result.cost_usd
         task.changed_files = result.changed_files or task.changed_files
@@ -232,7 +251,7 @@ class Workflow:
             return self._fail(task, "budget_exceeded")
         task.state = TaskState.fixing
         self._persist(task, "fix applied")
-        return {"task": task.model_dump()}
+        return {"task": task.model_dump(mode="json")}
 
     async def reporting(self, state: dict) -> dict:
         task = self._task(state)
@@ -246,16 +265,27 @@ class Workflow:
             feedback=task.feedback,
         )
         task.report = report
-        self._write_report(task, report)
+        report_path = self._write_report(task, report)
         task.state = TaskState.creating_mr
-        self._persist(task, "report ready, opening MR")
-        return {"task": task.model_dump()}
+        if report_path is None:
+            event = "report unavailable; opening MR"
+        elif report_path.is_relative_to(self.runs_dir):
+            event = f"report ready: {report_path}"
+        else:
+            event = f"playbook write failed; report staged locally: {report_path}"
+            await self.notifier(f"[loopctl] task {task.id} report was staged at {report_path}")
+        self._persist(task, event)
+        return {"task": task.model_dump(mode="json")}
 
     async def creating_mr(self, state: dict) -> dict:
         task = self._task(state)
         task.state = TaskState.creating_mr
         self._persist(task, "creating_mr")
         branch = task.branch or f"loopctl/{task.id}"
+        if self.engine.name == "claude_code" and (
+            branch == task.base_branch or not branch.startswith("loopctl/")
+        ):
+            return self._fail(task, "environment_error")
         plan_goal = task.plan.goal if task.plan else ""
         summary = task.report.summary if task.report else task.requirement
         description = assemble_mr_description(
@@ -284,20 +314,33 @@ class Workflow:
         task.state = TaskState.done
         self._append_stat(task, "done")
         self._persist(task, "done")
-        return {"task": task.model_dump()}
+        return {"task": task.model_dump(mode="json")}
 
     async def escalated(self, state: dict) -> dict:
         task = self._task(state)
+        if task.report is None:
+            task.report = distill_report(
+                requirement=task.requirement,
+                plan_goal=task.plan.goal if task.plan else "",
+                changed_files=task.changed_files,
+                test_result=f"escalated: {task.failure_class}",
+                feedback=task.feedback,
+            )
+            self._write_report(task, task.report)
         self._persist(task, f"escalated: {task.failure_class}")
         self._append_stat(task, "escalated")
         await self.notifier(f"[loopctl] task {task.id} escalated ({task.failure_class})")
-        return {"task": task.model_dump()}
+        return {"task": task.model_dump(mode="json")}
 
     # ----- routing --------------------------------------------------------
 
     def _route_after_gate(self, state: dict) -> str:
         task = self._task(state)
         return "planning" if task.feedback else "executing"
+
+    def _route_after_clarifying(self, state: dict) -> str:
+        task = self._task(state)
+        return "escalated" if task.state is TaskState.escalated else "planning"
 
     def _route_after_plan(self, state: dict) -> str:
         task = self._task(state)
@@ -342,7 +385,11 @@ class Workflow:
         graph.add_node("escalated", self.escalated)
 
         graph.add_edge(START, "clarifying")
-        graph.add_edge("clarifying", "planning")
+        graph.add_conditional_edges(
+            "clarifying",
+            self._route_after_clarifying,
+            {"planning": "planning", "escalated": "escalated"},
+        )
         graph.add_conditional_edges(
             "planning", self._route_after_plan, {"plan_gate": "plan_gate", "escalated": "escalated"}
         )
@@ -370,8 +417,9 @@ class Workflow:
         return graph
 
     @asynccontextmanager
-    async def _compiled(self):
-        async with get_checkpointer(self.checkpoint_path) as saver:
+    async def _compiled(self, task_id: str):
+        checkpoint_path = self.data_dir / "checkpoints" / f"{task_id}.sqlite"
+        async with get_checkpointer(checkpoint_path) as saver:
             yield self.builder.compile(checkpointer=saver)
 
     def _config(self, task_id: str) -> dict:
@@ -407,7 +455,7 @@ class Workflow:
     def _fail(self, task: Task, kind: str) -> dict:
         task.state = TaskState.escalated
         task.failure_class = kind
-        return {"task": task.model_dump()}
+        return {"task": task.model_dump(mode="json")}
 
     async def _run_tests(self) -> tuple[bool, str]:
         if not self.project.test_cmd:
@@ -421,12 +469,76 @@ class Workflow:
         out, _ = await proc.communicate()
         return proc.returncode == 0, out.decode(errors="replace")
 
-    def _write_report(self, task: Task, report: Any) -> None:
-        reports_dir = self.data_dir / "reports"
-        reports_dir.mkdir(parents=True, exist_ok=True)
-        (reports_dir / f"{task.id}.md").write_text(
-            render_report_markdown(report, task), encoding="utf-8"
+    async def _prepare_workspace(self, task: Task) -> None:
+        """Create a protected per-task branch before an editing-capable engine runs."""
+        if self.engine.name != "claude_code":
+            return
+        workdir = Path(self.project.repo_path or ".")
+        if not workdir.is_dir() or not (workdir / ".git").exists():
+            raise EngineError("environment_error", f"not a git repository: {workdir}")
+        status = await self._git_output(workdir, "status", "--porcelain")
+        if status.strip():
+            raise EngineError("environment_error", "working tree is not clean")
+        branch = f"loopctl/{task.id}"
+        exists = await self._git_ok(workdir, "show-ref", "--verify", f"refs/heads/{branch}")
+        args = ("switch", branch) if exists else ("switch", "-c", branch, task.base_branch)
+        if not await self._git_ok(workdir, *args):
+            raise EngineError("environment_error", f"cannot switch to task branch {branch}")
+        task.branch = branch
+        self._persist(task, f"workspace ready on {branch}")
+
+    async def _git_ok(self, workdir: Path, *args: str) -> bool:
+        proc = await asyncio.create_subprocess_exec(
+            "git",
+            *args,
+            cwd=str(workdir),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
+        await proc.communicate()
+        return proc.returncode == 0
+
+    async def _git_output(self, workdir: Path, *args: str) -> str:
+        proc = await asyncio.create_subprocess_exec(
+            "git",
+            *args,
+            cwd=str(workdir),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        out, err = await proc.communicate()
+        if proc.returncode != 0:
+            raise EngineError("environment_error", err.decode(errors="replace").strip())
+        return out.decode(errors="replace")
+
+    def _write_report(self, task: Task, report: Any) -> Path | None:
+        markdown = render_report_markdown(report, task)
+        day = datetime.now().astimezone().date().isoformat()
+        try:
+            day_dir = self.runs_dir / day
+            day_dir.mkdir(parents=True, exist_ok=True)
+            report_path = day_dir / f"{task.id}-report.md"
+            report_path.write_text(markdown, encoding="utf-8")
+            self._append_report_index(task, report_path, day)
+            return report_path
+        except OSError:
+            try:
+                fallback = self.data_dir / "reports" / f"{task.id}-report.md"
+                fallback.parent.mkdir(parents=True, exist_ok=True)
+                fallback.write_text(markdown, encoding="utf-8")
+                return fallback
+            except OSError:
+                return None
+
+    def _append_report_index(self, task: Task, report_path: Path, day: str) -> None:
+        summary_path = self.runs_dir / "summary.md"
+        if not summary_path.exists():
+            summary_path.write_text("# runs summary\n\n", encoding="utf-8")
+        outcome = task.failure_class or "completed"
+        rel = report_path.relative_to(self.runs_dir).as_posix()
+        entry = f"- {day} [{outcome}] {task.project} {task.id} — {task.requirement} → {rel}\n"
+        with summary_path.open("a", encoding="utf-8") as summary:
+            summary.write(entry)
 
     def _append_stat(self, task: Task, outcome: str) -> None:
         append_stat(

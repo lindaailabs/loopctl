@@ -16,20 +16,40 @@
 # 安装（uv 负责管理环境与依赖）
 uv sync
 
+# 指向私有知识库；若 playbook 与 loopctl 同级可省略
+export LOOPCTL_PLAYBOOK_ROOT=/path/to/playbook
+# PowerShell: $env:LOOPCTL_PLAYBOOK_ROOT='D:\\path\\to\\playbook'
+
 # 查看任务看板（在没有任何任务之前为空）
 uv run loopctl status
 
 # 列出已注册的项目
 uv run loopctl projects
 
-# 注册新项目（在你的 playbook 下生成 project.toml 与 spec.md 桩）
-uv run loopctl init my-project --repo-path /path/to/repo
+# 注册真实项目
+uv run loopctl init my-project --repo-path /path/to/repo \
+  --test-cmd "pytest -q" --gitlab-project-id 12345
+
+# 在启动任务前检查 repo、spec、引擎、测试和 GitLab 配置
+uv run loopctl doctor --project my-project
 
 # 列出可用的执行引擎
 uv run loopctl engines
 ```
 
-机器相关配置（仓库路径、token、GitLab 项目 id）通过配置文件与环境变量注入，**绝不**提交进仓库。详见 `docs/SPEC.md` 第 6 节配置模型。
+首次验证建议使用完全离线的 fake 引擎：
+
+```bash
+uv run loopctl init demo --engine fake
+uv run loopctl run "verify the workflow" --project demo --fg
+uv run loopctl approve <task-id>
+uv run loopctl approve <task-id>  # dry-run MR gate
+```
+
+真实任务会在编码引擎启动前检查工作区必须干净，并创建
+`loopctl/<task-id>` 分支；默认分支不会被直接推送。
+
+机器相关配置（仓库路径、token、GitLab 项目 id）通过配置文件与环境变量注入，**绝不**提交进仓库。真实运行前需设置 `GITLAB_TOKEN`。详见 `docs/SPEC.md` 第 6 节配置模型。
 
 ## 开发
 

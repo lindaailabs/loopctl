@@ -26,6 +26,9 @@ class ProjectConfig(BaseModel):
     # Machine-specific; only ever populated from the local override file, never
     # from the committed project.toml.
     repo_path: str | None = None
+    # Runtime-only location of playbook/projects/<slug>. Keeping this separate
+    # from repo_path prevents spec_refs from being resolved against the code repo.
+    knowledge_path: str | None = None
 
     @field_validator("slug")
     @classmethod

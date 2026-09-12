@@ -149,6 +149,26 @@ class HttpGitLabClient:
         raise GitLabError("api_error", f"failed to open MR: {last}")
 
 
+class DryRunGitLabClient:
+    """No-op MR integration paired with the explicit fake engine."""
+
+    name = "dry_run_gitlab"
+
+    async def push_branch(self, *, workdir: Path, branch: str, remote: str = "origin") -> None:
+        return None
+
+    async def open_mr(
+        self,
+        *,
+        project_id: int,
+        source_branch: str,
+        target_branch: str,
+        title: str,
+        description: str,
+    ) -> MRInfo:
+        return MRInfo(url=f"dry-run://merge-request/{source_branch}", iid=0)
+
+
 def assemble_mr_description(*, plan_goal: str, report_summary: str, spec_refs: list[str]) -> str:
     """Build the MR description body (SPEC §6.4 / §8 M2)."""
     refs = "\n".join(f"- {r}" for r in spec_refs) or "- (none)"

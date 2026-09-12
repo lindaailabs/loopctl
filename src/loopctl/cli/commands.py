@@ -48,7 +48,7 @@ def register_commands(app: typer.Typer) -> None:
         if fg:
             try:
                 task_id = asyncio.run(scheduler.start(requirement, project, base))
-            except FileNotFoundError as exc:
+            except (FileNotFoundError, RuntimeError, ValueError) as exc:
                 typer.echo(f"error: {exc}", err=True)
                 raise typer.Exit(1) from None
             task = scheduler.get_task(task_id)
@@ -68,7 +68,7 @@ def register_commands(app: typer.Typer) -> None:
             elif task.state is TaskState.escalated:
                 typer.echo(
                     f"task escalated ({task.failure_class}); check `loopctl report {task_id}` "
-                    "or `loopctl resume {task_id}` after fixing the environment."
+                    f"or `loopctl resume {task_id}` after fixing the environment."
                 )
             else:
                 typer.echo(f"state: {task.state.value}")
@@ -76,7 +76,7 @@ def register_commands(app: typer.Typer) -> None:
 
         try:
             task_id = scheduler.enqueue(requirement, project, base)
-        except FileNotFoundError as exc:
+        except (FileNotFoundError, RuntimeError, ValueError) as exc:
             typer.echo(f"error: {exc}", err=True)
             raise typer.Exit(1) from None
         if json_output:
@@ -147,7 +147,11 @@ def register_commands(app: typer.Typer) -> None:
         json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of text."),
     ) -> None:
         """Approve the plan and continue execution."""
-        asyncio.run(scheduler.approve(task_id))
+        try:
+            asyncio.run(scheduler.approve(task_id))
+        except (FileNotFoundError, RuntimeError, ValueError) as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(1) from None
         _echo_state(task_id, json_output, "approved; continuing")
 
     @app.command()
@@ -159,7 +163,11 @@ def register_commands(app: typer.Typer) -> None:
         json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of text."),
     ) -> None:
         """Reject the plan and send feedback back to planning."""
-        asyncio.run(scheduler.reject(task_id, feedback))
+        try:
+            asyncio.run(scheduler.reject(task_id, feedback))
+        except (FileNotFoundError, RuntimeError, ValueError) as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(1) from None
         _echo_state(task_id, json_output, "rejected; re-planning")
 
     @app.command()
@@ -168,7 +176,11 @@ def register_commands(app: typer.Typer) -> None:
         json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of text."),
     ) -> None:
         """Resume an interrupted or escalated task."""
-        asyncio.run(scheduler.resume(task_id))
+        try:
+            asyncio.run(scheduler.resume(task_id))
+        except (FileNotFoundError, RuntimeError, ValueError) as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(1) from None
         _echo_state(task_id, json_output, "resumed")
 
     @app.command()
@@ -222,7 +234,11 @@ def register_commands(app: typer.Typer) -> None:
         json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of text."),
     ) -> None:
         """Run the background supervisor: execute queued tasks (SPEC §8 M3)."""
-        executed = scheduler.serve(concurrency=concurrency, watch=watch)
+        try:
+            executed = scheduler.serve(concurrency=concurrency, watch=watch)
+        except (FileNotFoundError, RuntimeError, ValueError) as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(1) from None
         if json_output:
             _emit_json({"executed": executed})
         else:
@@ -265,6 +281,28 @@ def register_commands(app: typer.Typer) -> None:
                     str(counts.get("success_rate", 0.0)),
                 )
             console.print(pt)
+
+    @app.command()
+    def doctor(
+        project: str = typer.Option(..., "--project", "-p", help="Registered project slug."),
+        json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of text."),
+    ) -> None:
+        """Check paths, engine, tests and GitLab prerequisites before running."""
+        try:
+            result = scheduler.doctor(project)
+        except (FileNotFoundError, ValueError) as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(1) from None
+        if json_output:
+            _emit_json(result)
+        elif result["ready"]:
+            typer.echo(f"project '{project}' is ready")
+        else:
+            typer.echo(f"project '{project}' is not ready:", err=True)
+            for issue in result["issues"]:
+                typer.echo(f"  - {issue}", err=True)
+        if not result["ready"]:
+            raise typer.Exit(1)
 
     @app.command()
     def init(

@@ -66,6 +66,7 @@ def load_project(
         test_cmd=data.get("test_cmd", ""),
         spec_refs=list(data.get("spec_refs", [])),
         limits=Limits.from_config(data.get("limits", {})),
+        knowledge_path=str(toml_path.parent),
     )
 
     if cfg.engine not in ENGINE_REGISTRY:
