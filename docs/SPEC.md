@@ -268,7 +268,7 @@ Python ≥ 3.11 · uv · asyncio · typer + rich · langgraph（含 SqliteSaver 
 - [x] 失败分类表全部落地、退避重试、预算控制
 - [x] 真实项目上跑 5+ 任务，stats 产出第一批数据（需在具备 `GITLAB_TOKEN` 与 `claude` 二进制的真机环境执行；本仓库以 fake engine + MockTransport 覆盖完整闭环与各类失败路径）
 - **验收**：真实需求任务全自动到达 MR；一次人为注入的测试失败被 fix loop 处理并在超限后正确 escalated + 通知。
-- 注：`awaiting_pr_review` 作为第二个 interrupt gate，人类 `loopctl approve <id>` 后任务 `done`（见 `docs/decisions/adr-0009-draft-mr-gate.md`）。
+- 注：`awaiting_pr_review` 作为第二个 interrupt gate，人类 `loopctl approve <id>` 后任务 `done`（见 `docs/decisions/adr-0009-mr-gate.md`）。
 
 ### M3 并行调度与恢复
 - [x] 任务队列、跨项目并行（并发上限可配）、项目内互斥（ADR-0008）

@@ -1,6 +1,6 @@
-# ADR-0009 (draft): MR 创建与 PR 第二个人工 gate
+# ADR-0009: MR 创建与 PR 第二个人工 gate
 
-- 状态：草案（待人工确认）
+- 状态：已确认（M2 实现，M3 收尾）
 - 提出：M2 实现期间
 - 关联：SPEC §5.1、§5.2、§8 M2
 
@@ -32,6 +32,6 @@ token 取自 `GITLAB_TOKEN`，base URL 取自 `GITLAB_URL`（默认 `https://git
 - 新增 `mr <id>` 命令查看 MR url；`status` 增加 `mr` 列。
 - 所有 GitLab 交互经 `GitLabClient` 协议注入，`HttpGitLabClient` 为生产实现，单测用 fake。
 
-## 待确认
+## 结论
 
-- 是否接受「第二个 gate 需显式 `approve`」而非「开 MR 即 done」？如否决则改为选项 1（图接线简化）。
+- 采用选项 2（第二个 gate 需显式 `approve`），已在 M2 落地并通过单测验证；M3 起为正式决策。
