@@ -1,0 +1,11 @@
+slug = "sample"
+display_name = "Sample Python Project"
+engine = "claude_code"
+default_branch = "main"
+test_cmd = "pytest -q"
+spec_refs = ["spec.md"]
+
+[limits]
+engine_timeout_min = 10
+fix_loop_max = 2
+budget_usd = 2.0
