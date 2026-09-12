@@ -37,6 +37,11 @@ def register_commands(app: typer.Typer) -> None:
         requirement: str = typer.Argument(..., help="Natural-language requirement."),
         project: str = typer.Option(..., "--project", "-p", help="Registered project slug."),
         base: str = typer.Option(None, "--base", help="Base branch to branch from."),
+        branch_name: str = typer.Option(
+            None,
+            "--branch-name",
+            help="English branch label; required when the requirement has no English words.",
+        ),
         fg: bool = typer.Option(
             False,
             "--fg",
@@ -47,7 +52,9 @@ def register_commands(app: typer.Typer) -> None:
         """Create a task. Without --fg it is queued for the background supervisor (SPEC §8 M3)."""
         if fg:
             try:
-                task_id = asyncio.run(scheduler.start(requirement, project, base))
+                task_id = asyncio.run(
+                    scheduler.start(requirement, project, base, branch_name=branch_name)
+                )
             except (FileNotFoundError, RuntimeError, ValueError) as exc:
                 typer.echo(f"error: {exc}", err=True)
                 raise typer.Exit(1) from None
@@ -75,7 +82,7 @@ def register_commands(app: typer.Typer) -> None:
             return
 
         try:
-            task_id = scheduler.enqueue(requirement, project, base)
+            task_id = scheduler.enqueue(requirement, project, base, branch_name=branch_name)
         except (FileNotFoundError, RuntimeError, ValueError) as exc:
             typer.echo(f"error: {exc}", err=True)
             raise typer.Exit(1) from None

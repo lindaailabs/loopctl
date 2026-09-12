@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import subprocess
 from pathlib import Path
 
@@ -11,7 +12,7 @@ from loopctl.engines.base import EngineResult
 from loopctl.graph.workflow import Workflow
 from loopctl.integrations.gitlab import MRInfo
 from loopctl.models.project import ProjectConfig
-from loopctl.models.task import TaskState
+from loopctl.models.task import Task, TaskState
 
 
 async def _noop_notify(message: str) -> None:
@@ -79,7 +80,7 @@ def test_false_engine_result_escalates(tmp_data_dir: Path) -> None:
 def test_claude_engine_prepares_task_branch(tmp_data_dir: Path) -> None:
     repo = tmp_data_dir / "repo"
     repo.mkdir()
-    subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "init", "-b", "master"], cwd=repo, check=True, capture_output=True)
     (repo / "README.md").write_text("seed", encoding="utf-8")
     subprocess.run(["git", "add", "README.md"], cwd=repo, check=True, capture_output=True)
     subprocess.run(
@@ -105,6 +106,7 @@ def test_claude_engine_prepares_task_branch(tmp_data_dir: Path) -> None:
         slug="sample",
         engine="claude_code",
         repo_path=str(repo),
+        default_branch="master",
         test_cmd='python -c "pass"',
     )
     wf = Workflow(
@@ -115,11 +117,13 @@ def test_claude_engine_prepares_task_branch(tmp_data_dir: Path) -> None:
         notifier=_noop_notify,
         gitlab=FakeGitLab(),
     )
-    task_id = asyncio.run(wf.start("do work"))
+    task_id = asyncio.run(wf.start("增加负数校验", branch_name="negative_argument_validation"))
     task = wf.store.get(task_id)
     assert task is not None
     assert task.state is TaskState.awaiting_plan_approval
-    assert task.branch == f"loopctl/{task_id}"
+    assert task.branch is not None
+    assert re.fullmatch(r"negative_argument_validation_\d{8}_\d{6}", task.branch)
+    assert task.base_branch == "master"
     branch = subprocess.run(
         ["git", "branch", "--show-current"],
         cwd=repo,
@@ -128,3 +132,18 @@ def test_claude_engine_prepares_task_branch(tmp_data_dir: Path) -> None:
         text=True,
     ).stdout.strip()
     assert branch == task.branch
+
+
+def test_english_requirement_generates_branch_label(tmp_data_dir: Path) -> None:
+    cfg = ProjectConfig(slug="sample", engine="fake")
+    wf = Workflow(
+        project=cfg,
+        data_dir=tmp_data_dir,
+        db_path=tmp_data_dir / "db.sqlite",
+        engine=FakeEngine(),
+        notifier=_noop_notify,
+        gitlab=FakeGitLab(),
+    )
+    task = Task(id="sample-1", project="sample", requirement="Add negative argument validation")
+    branch = wf._task_branch_name(task)
+    assert re.fullmatch(r"add_negative_argument_validation_\d{8}_\d{6}", branch)

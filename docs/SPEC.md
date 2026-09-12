@@ -68,7 +68,7 @@
 包名/仓库名/命令名统一为 `loopctl`。所有命令支持全局 `--json` 输出机器可读格式（为未来 API 层预留）。
 
 ```
-loopctl run "<requirement>" --project <slug> [--base <branch>] [--fg]
+loopctl run "<requirement>" --project <slug> [--base <branch>] [--branch-name <english>] [--fg]
 loopctl status                                  # 全部任务看板
 loopctl watch <task-id>                         # 实时跟随事件流
 loopctl approve <task-id>                       # 通过计划，继续执行
@@ -87,6 +87,7 @@ loopctl serve [--concurrency N] [--watch]       # 后台监督器：执行队列
 行为定义：
 
 - `run`：默认将 Task 入队，由 `loopctl serve` 后台执行；`--fg` 前台阻塞到首个 gate。即使中断（Ctrl-C），checkpoint 已持久化，可 `resume`。
+- 真实编码前从 `default_branch`（或单次 `--base`）创建 `<英文需求>_<yyyyMMdd_HHmmss>` 特性分支；非英文需求用 `--branch-name` 提供英文标识。`default_branch` 默认 `main`，初始化时可设为 `master` 或其他分支。
 - `status`：rich 表格，列：task-id、project、state、age、engine、cost、最后事件。
 - `approve`：对 `awaiting_plan_approval` 状态的任务生效；其他状态报错退出。
 - `reject`：feedback 文本注入图状态，任务回到 planning 节点重新规划。

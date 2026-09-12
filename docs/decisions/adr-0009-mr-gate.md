@@ -22,8 +22,10 @@ SPEC §5.1 状态机给出 `creating_mr → awaiting_pr_review → done`，§1.2
 `awaiting_pr_review`；人类在 GitLab 审查后运行 `loopctl approve <id>`（或 `loopctl resume <id>`）
 将任务标记为 `done`。这严格贴合 SPEC 的「两个 gate」模型与 §5.1 状态机，且不引入轮询/部署逻辑。
 
-分支策略：`creating_mr` 优先使用引擎产出的 `task.branch`，缺失时回退到 `loopctl/<task-id>`；
-推送通过 `git push -u origin <branch>` 触发 GitLab 自动建分支（无需先调 GitLab 建分支 API）。
+分支策略：编码引擎启动前，由 loopctl 从项目 `default_branch`（或任务 `--base`）创建
+`<英文需求>_<yyyyMMdd_HHmmss>` 分支；非英文需求通过 `--branch-name` 明确提供英文标识。
+推送前再次确认该分支不是基线分支，再通过 `git push -u origin <branch>` 触发 GitLab
+自动建分支（无需先调 GitLab 建分支 API）。
 token 取自 `GITLAB_TOKEN`，base URL 取自 `GITLAB_URL`（默认 `https://gitlab.com`），均在运行时注入，不进仓库。
 
 ## 影响

@@ -46,8 +46,10 @@ uv run loopctl approve <task-id>
 uv run loopctl approve <task-id>  # dry-run MR gate
 ```
 
-真实任务会在编码引擎启动前检查工作区必须干净，并创建
-`loopctl/<task-id>` 分支；默认分支不会被直接推送。
+真实任务会在编码引擎启动前检查工作区必须干净，并从项目配置的
+`default_branch` 创建 `<英文需求>_<yyyyMMdd_HHmmss>` 分支；默认分支不会被直接
+推送。需求没有英文词时，通过 `--branch-name <英文标识>` 指定，例如：
+`loopctl run "增加负数校验" -p calculator --branch-name negative_validation`。
 
 机器相关配置（仓库路径、token、GitLab 项目 id）通过配置文件与环境变量注入，**绝不**提交进仓库。真实运行前需设置 `GITLAB_TOKEN`。详见 `docs/SPEC.md` 第 6 节配置模型。
 

@@ -13,6 +13,7 @@ client are injected so unit tests can drive the loop with fakes and no network.
 from __future__ import annotations
 
 import asyncio
+import re
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -82,13 +83,20 @@ class Workflow:
 
     # ----- public API -----------------------------------------------------
 
-    async def start(self, requirement: str, base_branch: str | None = None) -> str:
+    async def start(
+        self,
+        requirement: str,
+        base_branch: str | None = None,
+        *,
+        branch_name: str | None = None,
+    ) -> str:
         base = base_branch or self.project.default_branch
         task = Task(
             id=self._new_id(),
             project=self.project.slug,
             requirement=requirement,
             base_branch=base,
+            branch_name=branch_name,
             engine=self.project.engine,
             spec=load_spec(Path(self.project.knowledge_path or "."), self.project.spec_refs),
         )
@@ -282,9 +290,7 @@ class Workflow:
         task.state = TaskState.creating_mr
         self._persist(task, "creating_mr")
         branch = task.branch or f"loopctl/{task.id}"
-        if self.engine.name == "claude_code" and (
-            branch == task.base_branch or not branch.startswith("loopctl/")
-        ):
+        if self.engine.name == "claude_code" and branch == task.base_branch:
             return self._fail(task, "environment_error")
         plan_goal = task.plan.goal if task.plan else ""
         summary = task.report.summary if task.report else task.requirement
@@ -479,13 +485,25 @@ class Workflow:
         status = await self._git_output(workdir, "status", "--porcelain")
         if status.strip():
             raise EngineError("environment_error", "working tree is not clean")
-        branch = f"loopctl/{task.id}"
+        branch = task.branch or self._task_branch_name(task)
         exists = await self._git_ok(workdir, "show-ref", "--verify", f"refs/heads/{branch}")
         args = ("switch", branch) if exists else ("switch", "-c", branch, task.base_branch)
         if not await self._git_ok(workdir, *args):
             raise EngineError("environment_error", f"cannot switch to task branch {branch}")
         task.branch = branch
         self._persist(task, f"workspace ready on {branch}")
+
+    def _task_branch_name(self, task: Task) -> str:
+        source = task.branch_name or task.requirement
+        label = re.sub(r"[^A-Za-z0-9]+", "_", source).strip("_").lower()
+        if not label or not re.search(r"[A-Za-z]", label):
+            raise EngineError(
+                "environment_error",
+                "an English branch label is required; pass --branch-name <english_name>",
+            )
+        label = label[:60].rstrip("_")
+        timestamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
+        return f"{label}_{timestamp}"
 
     async def _git_ok(self, workdir: Path, *args: str) -> bool:
         proc = await asyncio.create_subprocess_exec(

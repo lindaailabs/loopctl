@@ -65,16 +65,23 @@ async def start(
     project_slug: str,
     base: str | None = None,
     *,
+    branch_name: str | None = None,
     engine=None,
     notifier=None,
     gitlab: GitLabClient | None = None,
 ) -> str:
     return await build(project_slug, engine=engine, notifier=notifier, gitlab=gitlab).start(
-        requirement, base
+        requirement, base, branch_name=branch_name
     )
 
 
-def enqueue(requirement: str, project_slug: str, base: str | None = None) -> str:
+def enqueue(
+    requirement: str,
+    project_slug: str,
+    base: str | None = None,
+    *,
+    branch_name: str | None = None,
+) -> str:
     """Register a task in the ``queued`` state for the background supervisor (SPEC §8 M3)."""
     cfg = load_project(project_slug, root=paths.projects_root())
     require_runtime(cfg)
@@ -83,6 +90,7 @@ def enqueue(requirement: str, project_slug: str, base: str | None = None) -> str
         project=cfg.slug,
         requirement=requirement,
         base_branch=base or cfg.default_branch,
+        branch_name=branch_name,
         engine=cfg.engine,
         state=TaskState.queued,
         spec=load_spec(Path(cfg.knowledge_path or "."), cfg.spec_refs),

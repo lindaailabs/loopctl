@@ -43,7 +43,8 @@ uv run loopctl engines
 For a first, fully offline verification, initialize with `--engine fake`. The
 fake engine and dry-run MR client exercise both approval gates without touching
 a source repository or the network. Real runs require a clean git worktree and
-create a protected `loopctl/<task-id>` branch before the coding engine starts.
+create `<english_requirement>_<yyyyMMdd_HHmmss>` from the configured
+`default_branch`. Use `--branch-name <english_label>` for non-English requirements.
 
 Machine-specific configuration (repository paths, tokens, GitLab IDs) is injected
 through configuration files and environment variables and is **never** committed.

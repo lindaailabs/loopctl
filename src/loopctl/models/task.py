@@ -58,6 +58,7 @@ class Task(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     base_branch: str = "main"
+    branch_name: str | None = None
     branch: str | None = None
     engine: str = "claude_code"
     plan: Plan | None = None
