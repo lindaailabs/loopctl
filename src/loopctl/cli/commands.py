@@ -16,6 +16,7 @@ from rich.console import Console
 from rich.table import Table
 
 from loopctl import scheduler
+from loopctl.models.task import TaskState
 
 console = Console()
 
@@ -39,7 +40,7 @@ def register_commands(app: typer.Typer) -> None:
         fg: bool = typer.Option(False, "--fg", help="Run in the foreground (blocks until a gate)."),
         json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of text."),
     ) -> None:
-        """Create a task and run it up to the first human gate."""
+        """Create a task and run it through to the plan gate (or MR in background)."""
         try:
             task_id = asyncio.run(scheduler.start(requirement, project, base))
         except FileNotFoundError as exc:
@@ -92,7 +93,7 @@ def register_commands(app: typer.Typer) -> None:
             )
             return
         table = Table(title="Tasks")
-        for column in ("task-id", "project", "state", "age", "engine", "cost", "last-event"):
+        for column in ("task-id", "project", "state", "age", "engine", "cost", "mr", "last-event"):
             table.add_column(column)
         for t in tasks:
             table.add_row(
@@ -102,6 +103,7 @@ def register_commands(app: typer.Typer) -> None:
                 _age(t.created_at),
                 t.engine,
                 f"${t.cost_usd:.2f}",
+                t.mr_url or "-",
                 t.last_event,
             )
         console.print(table)
@@ -166,6 +168,21 @@ def register_commands(app: typer.Typer) -> None:
             _emit_json({"report": md})
         else:
             typer.echo(md)
+
+    @app.command()
+    def mr(
+        task_id: str = typer.Argument(..., help="Task id."),
+        json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of text."),
+    ) -> None:
+        """Show the GitLab merge request URL for a task."""
+        url = scheduler.mr_url(task_id)
+        if url is None:
+            typer.echo("no MR available yet", err=True)
+            raise typer.Exit(1)
+        if json_output:
+            _emit_json({"task_id": task_id, "mr_url": url})
+        else:
+            typer.echo(url)
 
     @app.command()
     def watch(task_id: str = typer.Argument(..., help="Task id.")) -> None:

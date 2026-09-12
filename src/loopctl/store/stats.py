@@ -9,10 +9,37 @@ from typing import Any
 
 
 def append_stat(stats_path: Path, record: dict[str, Any]) -> None:
+    """Upsert one stats record keyed by ``task_id`` (SPEC §6.2: one row per task).
+
+    Re-reading and rewriting keeps the file append-style (one JSON object per line)
+    while guaranteeing a single row per task even when a task escalates and is later
+    resumed to a terminal state.
+    """
     stats_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"ts": time.time(), **record}
-    with stats_path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    rows: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    if stats_path.exists():
+        with stats_path.open(encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    parsed = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                tid = parsed.get("task_id")
+                if tid not in rows:
+                    order.append(tid)
+                rows[tid] = parsed
+    tid = payload.get("task_id")
+    if tid not in rows:
+        order.append(tid)
+    rows[tid] = payload
+    with stats_path.open("w", encoding="utf-8") as f:
+        for key in order:
+            f.write(json.dumps(rows[key], ensure_ascii=False) + "\n")
 
 
 def aggregate(stats_path: Path) -> dict[str, Any]:

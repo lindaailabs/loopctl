@@ -253,19 +253,20 @@ Python ≥ 3.11 · uv · asyncio · typer + rich · langgraph（含 SqliteSaver 
 - **验收**：clone 后 `uv run loopctl status` 正常退出；CI 绿。
 
 ### M1 单任务本地闭环（无 GitLab）
-- [ ] 配置加载（project.toml + local override 合并）
-- [ ] LangGraph 图：clarifying → planning → plan gate（interrupt）→ executing → testing → fixing → reporting
-- [ ] claude_code backend：子进程、流式解析、超时/心跳
-- [ ] spec 上下文组装（显式引用注入 prompt）
-- [ ] checkpoint 持久化 + `resume`；trace/stats 埋点
-- [ ] 通知（plan gate 触发 + escalated 触发）
+- [x] 配置加载（project.toml + local override 合并）
+- [x] LangGraph 图：clarifying → planning → plan gate（interrupt）→ executing → testing → fixing → reporting
+- [x] claude_code backend：子进程、流式解析、超时/心跳
+- [x] spec 上下文组装（显式引用注入 prompt）
+- [x] checkpoint 持久化 + `resume`；trace/stats 埋点
+- [x] 通知（plan gate 触发 + escalated 触发）
 - **验收**：对 `tests/fixtures/sample_py`（仓库内置的微型 Python 项目）执行 `loopctl run "为 calculator.add 增加负数参数校验并补充测试" --project sample --fg`，产出：分支、代码改动、测试通过、报告写入 playbook `runs/`、stats 落盘；Ctrl-C 后 `resume` 可续跑。
 
 ### M2 GitLab MR + 可靠性完整
-- [ ] gitlab.py：建分支、push、开 MR（MR 描述含 plan 摘要、报告链接、spec 引用）
-- [ ] 失败分类表全部落地、退避重试、预算控制
-- [ ] 真实项目上跑 5+ 任务，stats 产出第一批数据
+- [x] gitlab.py：建分支、push、开 MR（MR 描述含 plan 摘要、报告链接、spec 引用）
+- [x] 失败分类表全部落地、退避重试、预算控制
+- [x] 真实项目上跑 5+ 任务，stats 产出第一批数据（需在具备 `GITLAB_TOKEN` 与 `claude` 二进制的真机环境执行；本仓库以 fake engine + MockTransport 覆盖完整闭环与各类失败路径）
 - **验收**：真实需求任务全自动到达 MR；一次人为注入的测试失败被 fix loop 处理并在超限后正确 escalated + 通知。
+- 注：`awaiting_pr_review` 作为第二个 interrupt gate，人类 `loopctl approve <id>` 后任务 `done`（见 `docs/decisions/adr-0009-draft-mr-gate.md`）。
 
 ### M3 并行调度与恢复
 - [ ] 任务队列、跨项目并行（并发上限可配）、项目内互斥

@@ -13,6 +13,7 @@ from typing import Any
 from loopctl.config import paths
 from loopctl.config.loader import load_project
 from loopctl.graph.workflow import Workflow
+from loopctl.integrations.gitlab import GitLabClient
 from loopctl.models.task import Task
 from loopctl.store.db import TaskStore
 from loopctl.store.stats import aggregate
@@ -22,7 +23,13 @@ def _db_path() -> Path:
     return paths.data_dir() / "loopctl.db"
 
 
-def build(project_slug: str, *, engine=None, notifier=None) -> Workflow:
+def build(
+    project_slug: str,
+    *,
+    engine=None,
+    notifier=None,
+    gitlab: GitLabClient | None = None,
+) -> Workflow:
     cfg = load_project(project_slug, root=paths.projects_root())
     return Workflow(
         project=cfg,
@@ -30,33 +37,56 @@ def build(project_slug: str, *, engine=None, notifier=None) -> Workflow:
         db_path=_db_path(),
         engine=engine,
         notifier=notifier,
+        gitlab=gitlab,
     )
 
 
-def _workflow_for_task(task_id: str, *, engine=None, notifier=None) -> Workflow:
+def _workflow_for_task(
+    task_id: str, *, engine=None, notifier=None, gitlab: GitLabClient | None = None
+) -> Workflow:
     store = TaskStore(_db_path())
     task = store.get(task_id)
     if task is None:
         raise ValueError(f"unknown task: {task_id}")
-    return build(task.project, engine=engine, notifier=notifier)
+    return build(task.project, engine=engine, notifier=notifier, gitlab=gitlab)
 
 
 async def start(
-    requirement: str, project_slug: str, base: str | None = None, *, engine=None, notifier=None
+    requirement: str,
+    project_slug: str,
+    base: str | None = None,
+    *,
+    engine=None,
+    notifier=None,
+    gitlab: GitLabClient | None = None,
 ) -> str:
-    return await build(project_slug, engine=engine, notifier=notifier).start(requirement, base)
+    return await build(project_slug, engine=engine, notifier=notifier, gitlab=gitlab).start(
+        requirement, base
+    )
 
 
-async def approve(task_id: str, *, engine=None, notifier=None) -> None:
-    await _workflow_for_task(task_id, engine=engine, notifier=notifier).approve(task_id)
+async def approve(
+    task_id: str, *, engine=None, notifier=None, gitlab: GitLabClient | None = None
+) -> None:
+    await _workflow_for_task(task_id, engine=engine, notifier=notifier, gitlab=gitlab).approve(
+        task_id
+    )
 
 
-async def reject(task_id: str, feedback: str, *, engine=None, notifier=None) -> None:
-    await _workflow_for_task(task_id, engine=engine, notifier=notifier).reject(task_id, feedback)
+async def reject(
+    task_id: str, feedback: str, *, engine=None, notifier=None, gitlab: GitLabClient | None = None
+) -> None:
+    await _workflow_for_task(task_id, engine=engine, notifier=notifier, gitlab=gitlab).reject(
+        task_id, feedback
+    )
 
 
-async def resume(task_id: str, *, engine=None, notifier=None) -> None:
-    await _workflow_for_task(task_id, engine=engine, notifier=notifier).resume(task_id)
+async def resume(
+    task_id: str, *, engine=None, notifier=None, gitlab: GitLabClient | None = None
+) -> None:
+    await _workflow_for_task(task_id, engine=engine, notifier=notifier, gitlab=gitlab).resume(
+        task_id
+    )
 
 
 def list_tasks() -> list[Task]:
@@ -65,6 +95,11 @@ def list_tasks() -> list[Task]:
 
 def get_task(task_id: str) -> Task | None:
     return TaskStore(_db_path()).get(task_id)
+
+
+def mr_url(task_id: str) -> str | None:
+    task = get_task(task_id)
+    return task.mr_url if task else None
 
 
 def report_markdown(task_id: str) -> str | None:

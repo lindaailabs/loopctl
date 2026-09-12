@@ -64,6 +64,9 @@ class Task(BaseModel):
     report: Report | None = None
     feedback: str | None = None
     fix_loops: int = 0
+    exec_retries: int = 0  # engine_timeout retries already attempted
+    pending_retry: bool = False  # transient: re-enter the current node once
+    mr_attempts: int = 0  # api_error retries already attempted (GitLab)
     tokens: int = 0
     cost_usd: float = 0.0
     last_event: str = ""
@@ -71,3 +74,4 @@ class Task(BaseModel):
     spec: str = ""
     changed_files: list[str] = Field(default_factory=list)
     test_failure: str | None = None
+    mr_url: str | None = None  # set once a GitLab MR is opened (M2)
