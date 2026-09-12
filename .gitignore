@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Loopctl runtime data (machine-local; never commit)
+data/
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
