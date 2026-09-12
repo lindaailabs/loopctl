@@ -63,10 +63,24 @@ def aggregate(stats_path: Path) -> dict[str, Any]:
     tokens = sum(int(r.get("tokens", 0)) for r in rows)
     cost = round(sum(float(r.get("cost_usd", 0.0)) for r in rows), 2)
 
-    by_project: dict[str, dict[str, int]] = {}
+    durations = [float(r.get("duration_s", 0.0)) for r in rows if r.get("duration_s") is not None]
+    avg_duration = round(sum(durations) / len(durations), 1) if durations else 0.0
+    avg_cost = round(cost / total, 4) if total else 0.0
+
+    by_project: dict[str, dict[str, Any]] = {}
     for r in rows:
         slug = r.get("project", "?")
-        bucket = by_project.setdefault(slug, {"total": 0, "done": 0, "escalated": 0, "failed": 0})
+        bucket = by_project.setdefault(
+            slug,
+            {
+                "total": 0,
+                "done": 0,
+                "escalated": 0,
+                "failed": 0,
+                "cost_usd": 0.0,
+                "duration_s": 0.0,
+            },
+        )
         bucket["total"] += 1
         outcome = r.get("outcome")
         if outcome == "done":
@@ -75,6 +89,15 @@ def aggregate(stats_path: Path) -> dict[str, Any]:
             bucket["escalated"] += 1
         elif outcome == "failed":
             bucket["failed"] += 1
+        bucket["cost_usd"] += float(r.get("cost_usd", 0.0))
+        if r.get("duration_s") is not None:
+            bucket["duration_s"] += float(r.get("duration_s"))
+
+    for bucket in by_project.values():
+        bt = bucket["total"]
+        bucket["success_rate"] = round(bucket["done"] / bt, 3) if bt else 0.0
+        bucket["avg_cost_usd"] = round(bucket["cost_usd"] / bt, 4) if bt else 0.0
+        bucket["avg_duration_s"] = round(bucket["duration_s"] / bt, 1) if bt else 0.0
 
     return {
         "total": total,
@@ -86,6 +109,8 @@ def aggregate(stats_path: Path) -> dict[str, Any]:
         "fix_loops": fix_loops,
         "tokens": tokens,
         "cost_usd": cost,
+        "avg_duration_s": avg_duration,
+        "avg_cost_usd": avg_cost,
         "success_rate": round(done / total, 3) if total else 0.0,
         "by_project": by_project,
     }

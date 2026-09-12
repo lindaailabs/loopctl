@@ -243,6 +243,8 @@ def register_commands(app: typer.Typer) -> None:
         for key in ("total", "done", "escalated", "failed", "auto_to_mr", "success_rate"):
             if key in summary:
                 table.add_row(key, str(summary[key]))
+        table.add_row("avg_duration_s", str(summary.get("avg_duration_s", 0.0)))
+        table.add_row("avg_cost_usd", str(summary.get("avg_cost_usd", 0.0)))
         table.add_row("interventions", str(summary.get("interventions", 0)))
         table.add_row("fix_loops", str(summary.get("fix_loops", 0)))
         table.add_row("tokens", str(summary.get("tokens", 0)))
@@ -251,7 +253,7 @@ def register_commands(app: typer.Typer) -> None:
         by_project = summary.get("by_project") or {}
         if by_project:
             pt = Table(title="By project")
-            for column in ("project", "total", "done", "escalated", "failed"):
+            for column in ("project", "total", "done", "escalated", "failed", "success_rate"):
                 pt.add_column(column)
             for slug, counts in sorted(by_project.items()):
                 pt.add_row(
@@ -260,8 +262,82 @@ def register_commands(app: typer.Typer) -> None:
                     str(counts.get("done", 0)),
                     str(counts.get("escalated", 0)),
                     str(counts.get("failed", 0)),
+                    str(counts.get("success_rate", 0.0)),
                 )
             console.print(pt)
+
+    @app.command()
+    def init(
+        slug: str = typer.Argument(..., help="Project slug (alphanumeric, [A-Za-z0-9_-])."),
+        display_name: str = typer.Option("", "--display-name", "-n", help="Human-readable name."),
+        engine: str = typer.Option(
+            "claude_code", "--engine", "-e", help="Engine name (see `loopctl engines`)."
+        ),
+        git_remote: str = typer.Option("", "--git-remote", help="Git remote URL."),
+        gitlab_project_id: int | None = typer.Option(
+            None, "--gitlab-project-id", help="GitLab project id."
+        ),
+        default_branch: str = typer.Option("main", "--default-branch", help="Base branch."),
+        test_cmd: str = typer.Option("", "--test-cmd", help="Command that runs the test suite."),
+        spec_refs: list[str] = typer.Option(  # noqa: B008
+            (), "--spec-refs", help="Repeatable spec refs (relative to project dir)."
+        ),
+        repo_path: str = typer.Option(
+            None, "--repo-path", help="Machine-local repo path (written to the local override)."
+        ),
+        force: bool = typer.Option(False, "--force", help="Overwrite an existing project.toml."),
+        json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of text."),
+    ) -> None:
+        """Register a project: write project.toml (+ a spec.md stub, decisions/)."""
+        from loopctl.config import paths
+        from loopctl.config.loader import write_project
+
+        try:
+            created = write_project(
+                slug,
+                display_name=display_name,
+                engine=engine,
+                git_remote=git_remote,
+                gitlab_project_id=gitlab_project_id,
+                default_branch=default_branch,
+                test_cmd=test_cmd,
+                spec_refs=spec_refs or None,
+                repo_path=repo_path,
+                root=paths.projects_root(),
+                local_dir=paths.local_projects_dir(),
+                force=force,
+            )
+        except (FileExistsError, ValueError) as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(1) from None
+        if json_output:
+            _emit_json({"slug": slug, "created": {k: str(v) for k, v in created.items()}})
+            return
+        typer.echo(f"registered project '{slug}'")
+        for key, value in created.items():
+            typer.echo(f"  wrote {key}: {value}")
+        typer.echo(f'next: loopctl run "<requirement>" --project {slug}')
+
+    @app.command()
+    def engines(
+        json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of text."),
+    ) -> None:
+        """List registered execution engines and whether each is implemented."""
+        from loopctl.engines import ENGINE_REGISTRY, is_implemented
+
+        if json_output:
+            _emit_json(
+                {
+                    "engines": [
+                        {"name": name, "implemented": is_implemented(name)}
+                        for name in sorted(ENGINE_REGISTRY)
+                    ]
+                }
+            )
+            return
+        for name in sorted(ENGINE_REGISTRY):
+            tag = "implemented" if is_implemented(name) else "stub (not implemented)"
+            typer.echo(f"{name}\t{tag}")
 
 
 def _echo_state(task_id: str, json_output: bool, message: str) -> None:

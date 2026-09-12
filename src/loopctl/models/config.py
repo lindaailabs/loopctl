@@ -24,6 +24,20 @@ class Limits:
     # Scheduling (SPEC §8 M3).
     concurrency: int = 2  # max tasks running across projects at once
 
+    def __post_init__(self) -> None:
+        # Guard against misconfiguration that would silently break reliability
+        # logic (SPEC §5.3): timeouts/budget must be positive, concurrency >= 1.
+        if self.engine_timeout_min <= 0:
+            raise ValueError("engine_timeout_min must be > 0")
+        if self.heartbeat_idle_min <= 0:
+            raise ValueError("heartbeat_idle_min must be > 0")
+        if self.budget_usd < 0:
+            raise ValueError("budget_usd must be >= 0")
+        if self.backoff_base_s <= 0 or self.backoff_max_s <= 0:
+            raise ValueError("backoff_*_s must be > 0")
+        if self.concurrency < 1:
+            raise ValueError("concurrency must be >= 1")
+
     @classmethod
     def from_config(cls, data: dict) -> Limits:
         """Build limits from a project [limits] section, falling back to defaults."""

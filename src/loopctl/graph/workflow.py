@@ -23,8 +23,8 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
 from loopctl.config.loader import load_project
+from loopctl.engines import get_engine
 from loopctl.engines.base import EngineBackend, EngineContext, EngineError
-from loopctl.engines.claude_code import ClaudeCodeBackend
 from loopctl.graph.state import GraphState
 from loopctl.integrations.gitlab import (
     GitLabClient,
@@ -63,7 +63,7 @@ class Workflow:
         self.project = project
         self.data_dir = data_dir
         self.db_path = db_path
-        self.engine: EngineBackend = engine or ClaudeCodeBackend()
+        self.engine: EngineBackend = engine or get_engine(self.project.engine)
         self.notifier: Notifier = notifier or ntfy_notify
         self.gitlab: GitLabClient = gitlab or HttpGitLabClient()
         self.store = TaskStore(db_path)

@@ -77,6 +77,8 @@ loopctl report <task-id>                        # 查看任务报告
 loopctl projects                                # 列出已注册项目
 loopctl stats                                   # 汇总：成功率/介入/成本/按项目
 loopctl resume <task-id>                        # 恢复中断/升级的任务
+loopctl init <slug> [--display-name] [--engine] [--git-remote] [--gitlab-project-id] [--default-branch] [--test-cmd] [--spec-refs ...] [--repo-path]   # 注册项目（M4；slug 为 [A-Za-z0-9_-]）
+loopctl engines                                 # 列出已注册引擎及其实现状态（M4）
 loopctl mr <task-id>                            # 查看任务对应的 GitLab MR url（M2）
 loopctl serve [--concurrency N] [--watch]       # 后台监督器：执行队列中的任务（M3）
 ```
@@ -277,6 +279,18 @@ Python ≥ 3.11 · uv · asyncio · typer + rich · langgraph（含 SqliteSaver 
 - **验收**：2+ 项目 3+ 任务同时发起，并行推进无冲突；同项目两任务串行（以 fake engine 单测覆盖并发与项目互斥；真机并行需在具备 `claude` 的环境执行）。
 - 注：`resume` 断点恢复已在 M1 落地（`checkpoints.sqlite` + `loopctl resume`）。
 
+### M4 工具内低风险增强（in-tool hardening）
+
+在 CLI 工具内做明确、低风险的能力补全，不触及路线图二期/三期的 Web、多用户与沙箱部署（见 §1.2「不做」）。
+
+- [x] 引擎注册表（`engines/registry.py`）：`project.toml` 的 `engine` 名在运行时经注册表解析为 backend；`load_project` 与 `loopctl init` 校验引擎名（ADR-0010）
+- [x] 引擎 backend 桩：`fake`（可用 dry-run 后端）、`codex` / `openhands`（仅声明未实现，触发即 `NotImplementedError`，见 §1.2）
+- [x] 项目注册命令 `loopctl init <slug>`：生成 `project.toml` + `spec.md` 桩 + `decisions/` 目录，可选 `--repo-path` 写入本机 local override
+- [x] `loopctl engines`：列出已注册引擎及其实现状态
+- [x] 配置校验：`slug` 命名约束、`Limits` 正值约束、未知引擎名校验
+- [x] 更丰富的 `stats`：新增 `avg_duration_s` / `avg_cost_usd` 及按项目 `success_rate` / `avg_cost_usd` / `avg_duration_s`
+- **验收**：`loopctl engines` 列出 claude_code/fake（implemented）与 codex/openhands（stub）；`loopctl init demo --repo-path /tmp/demo` 在 `LOOPCTL_PROJECTS_ROOT` 下生成完整项目骨架且可被 `loopctl projects` 列出；配置校验对非法 slug / 未知引擎 / 负限额报错；stats 聚合产出上述新增指标（均有单测覆盖）。
+
 ---
 
 ## 9. 工程规范
@@ -301,6 +315,7 @@ Python ≥ 3.11 · uv · asyncio · typer + rich · langgraph（含 SqliteSaver 
 | 0006 | 知识蒸馏是工作流收尾节点，报告自动生成，人工只 review |
 | 0007 | 调度用 SQLite + asyncio，明确不上 Celery 的触发条件（多机/常驻服务需求出现时复议） |
 | 0008 | 跨项目并行、项目内互斥串行 |
+| 0010 | 引擎经注册表按名解析；codex/openhands 仅声明不实现（M4） |
 
 ---
 

@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+import re
+
+from pydantic import BaseModel, Field, field_validator
 
 from loopctl.models.config import Limits
+
+# Slugs are machine-readable identifiers used in paths and task ids. They must
+# start with an alphanumeric char and contain only [A-Za-z0-9_-].
+SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 
 
 class ProjectConfig(BaseModel):
@@ -20,3 +26,10 @@ class ProjectConfig(BaseModel):
     # Machine-specific; only ever populated from the local override file, never
     # from the committed project.toml.
     repo_path: str | None = None
+
+    @field_validator("slug")
+    @classmethod
+    def _check_slug(cls, value: str) -> str:
+        if not SLUG_RE.match(value):
+            raise ValueError(f"invalid slug '{value}': must match {SLUG_RE.pattern}")
+        return value

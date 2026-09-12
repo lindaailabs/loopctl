@@ -27,6 +27,12 @@ uv run loopctl status
 
 # List registered projects
 uv run loopctl projects
+
+# Register a new project (writes project.toml + a spec.md stub under your playbook)
+uv run loopctl init my-project --repo-path /path/to/repo
+
+# List the available execution engines
+uv run loopctl engines
 ```
 
 Machine-specific configuration (repository paths, tokens, GitLab IDs) is injected
