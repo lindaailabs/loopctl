@@ -284,10 +284,12 @@ def register_commands(app: typer.Typer) -> None:
 
     @app.command()
     def doctor(
-        project: str = typer.Option(..., "--project", "-p", help="Registered project slug."),
+        project: str | None = typer.Option(
+            None, "--project", "-p", help="Registered project slug. Omit for a global check."
+        ),
         json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of text."),
     ) -> None:
-        """Check paths, engine, tests and GitLab prerequisites before running."""
+        """Check environment (no --project) or a project's runtime prerequisites."""
         try:
             result = scheduler.doctor(project)
         except (FileNotFoundError, ValueError) as exc:
@@ -295,6 +297,14 @@ def register_commands(app: typer.Typer) -> None:
             raise typer.Exit(1) from None
         if json_output:
             _emit_json(result)
+            return
+        if result.get("scope") == "global":
+            if result["ready"]:
+                typer.echo("environment ready")
+            else:
+                typer.echo("environment is not ready:", err=True)
+                for issue in result["issues"]:
+                    typer.echo(f"  - {issue}", err=True)
         elif result["ready"]:
             typer.echo(f"project '{project}' is ready")
         else:

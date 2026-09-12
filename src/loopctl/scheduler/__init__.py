@@ -8,6 +8,8 @@ points that the CLI drives via `asyncio.run`.
 from __future__ import annotations
 
 import asyncio
+import shutil
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -182,7 +184,9 @@ def list_projects() -> list[dict[str, str]]:
     return out
 
 
-def doctor(project_slug: str) -> dict[str, Any]:
+def doctor(project_slug: str | None = None) -> dict[str, Any]:
+    if project_slug is None:
+        return _environment_report()
     cfg = load_project(project_slug, root=paths.projects_root())
     issues = runtime_issues(cfg)
     return {
@@ -192,4 +196,26 @@ def doctor(project_slug: str) -> dict[str, Any]:
         "repo_path": cfg.repo_path,
         "knowledge_path": cfg.knowledge_path,
         "runs_root": str(paths.runs_root()),
+    }
+
+
+def _environment_report() -> dict[str, Any]:
+    from loopctl.config.validation import global_environment_issues
+
+    issues = global_environment_issues()
+    return {
+        "scope": "global",
+        "ready": not issues,
+        "issues": issues,
+        "python": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        "tools": {
+            "claude": shutil.which("claude") is not None,
+            "git": shutil.which("git") is not None,
+            "uv": shutil.which("uv") is not None,
+        },
+        "paths": {
+            "data_dir": str(paths.data_dir()),
+            "projects_root": str(paths.projects_root()),
+            "runs_root": str(paths.runs_root()),
+        },
     }

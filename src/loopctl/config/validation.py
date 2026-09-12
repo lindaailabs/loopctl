@@ -6,6 +6,7 @@ import os
 import shutil
 from pathlib import Path
 
+from loopctl.config import paths
 from loopctl.engines import is_implemented
 from loopctl.models.project import ProjectConfig
 
@@ -47,3 +48,23 @@ def require_runtime(project: ProjectConfig) -> None:
     issues = runtime_issues(project)
     if issues:
         raise RuntimeError("project is not ready:\n- " + "\n- ".join(issues))
+
+
+def global_environment_issues() -> list[str]:
+    """Return issues that would block loopctl from operating at all (no project)."""
+    issues: list[str] = []
+    if shutil.which("git") is None:
+        issues.append("git executable was not found on PATH")
+
+    data = paths.data_dir()
+    try:
+        data.mkdir(parents=True, exist_ok=True)
+        probe = data / ".loopctl-write-test"
+        probe.write_text("", encoding="utf-8")
+        probe.unlink()
+    except OSError as exc:
+        issues.append(f"data_dir is not writable: {data} ({exc})")
+
+    if not paths.projects_root().exists():
+        issues.append(f"projects_root does not exist: {paths.projects_root()}")
+    return issues
