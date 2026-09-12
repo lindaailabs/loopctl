@@ -75,13 +75,15 @@ loopctl approve <task-id>                       # 通过计划，继续执行
 loopctl reject <task-id> --feedback "<text>"    # 驳回计划，注入反馈回到规划
 loopctl report <task-id>                        # 查看任务报告
 loopctl projects                                # 列出已注册项目
-loopctl stats                                   # 汇总：成功率/介入/成本
+loopctl stats                                   # 汇总：成功率/介入/成本/按项目
 loopctl resume <task-id>                        # 恢复中断/升级的任务
+loopctl mr <task-id>                            # 查看任务对应的 GitLab MR url（M2）
+loopctl serve [--concurrency N] [--watch]       # 后台监督器：执行队列中的任务（M3）
 ```
 
 行为定义：
 
-- `run`：创建 Task 入队。`--fg` 前台阻塞跟随（M1 默认且唯一模式）；后台模式 M3 实现。即使前台中断（Ctrl-C），checkpoint 已持久化，可 `resume`。
+- `run`：默认将 Task 入队，由 `loopctl serve` 后台执行；`--fg` 前台阻塞到首个 gate。即使中断（Ctrl-C），checkpoint 已持久化，可 `resume`。
 - `status`：rich 表格，列：task-id、project、state、age、engine、cost、最后事件。
 - `approve`：对 `awaiting_plan_approval` 状态的任务生效；其他状态报错退出。
 - `reject`：feedback 文本注入图状态，任务回到 planning 节点重新规划。
@@ -269,10 +271,11 @@ Python ≥ 3.11 · uv · asyncio · typer + rich · langgraph（含 SqliteSaver 
 - 注：`awaiting_pr_review` 作为第二个 interrupt gate，人类 `loopctl approve <id>` 后任务 `done`（见 `docs/decisions/adr-0009-draft-mr-gate.md`）。
 
 ### M3 并行调度与恢复
-- [ ] 任务队列、跨项目并行（并发上限可配）、项目内互斥
-- [ ] 后台执行模式（`run` 不加 `--fg` 即后台）
-- [ ] `stats` 汇总报表
-- **验收**：2+ 项目 3+ 任务同时发起，并行推进无冲突；同项目两任务串行。
+- [x] 任务队列、跨项目并行（并发上限可配）、项目内互斥（ADR-0008）
+- [x] 后台执行模式（`run` 不加 `--fg` 即后台入队；`loopctl serve` 监督器执行）
+- [x] `stats` 汇总报表（按项目分组）
+- **验收**：2+ 项目 3+ 任务同时发起，并行推进无冲突；同项目两任务串行（以 fake engine 单测覆盖并发与项目互斥；真机并行需在具备 `claude` 的环境执行）。
+- 注：`resume` 断点恢复已在 M1 落地（`checkpoints.sqlite` + `loopctl resume`）。
 
 ---
 

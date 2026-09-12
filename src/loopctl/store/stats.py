@@ -63,6 +63,19 @@ def aggregate(stats_path: Path) -> dict[str, Any]:
     tokens = sum(int(r.get("tokens", 0)) for r in rows)
     cost = round(sum(float(r.get("cost_usd", 0.0)) for r in rows), 2)
 
+    by_project: dict[str, dict[str, int]] = {}
+    for r in rows:
+        slug = r.get("project", "?")
+        bucket = by_project.setdefault(slug, {"total": 0, "done": 0, "escalated": 0, "failed": 0})
+        bucket["total"] += 1
+        outcome = r.get("outcome")
+        if outcome == "done":
+            bucket["done"] += 1
+        elif outcome == "escalated":
+            bucket["escalated"] += 1
+        elif outcome == "failed":
+            bucket["failed"] += 1
+
     return {
         "total": total,
         "done": done,
@@ -74,4 +87,5 @@ def aggregate(stats_path: Path) -> dict[str, Any]:
         "tokens": tokens,
         "cost_usd": cost,
         "success_rate": round(done / total, 3) if total else 0.0,
+        "by_project": by_project,
     }

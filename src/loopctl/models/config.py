@@ -21,6 +21,8 @@ class Limits:
     mr_api_retry_max: int = 5  # api_error retries when talking to GitLab
     backoff_base_s: float = 2.0
     backoff_max_s: float = 60.0
+    # Scheduling (SPEC §8 M3).
+    concurrency: int = 2  # max tasks running across projects at once
 
     @classmethod
     def from_config(cls, data: dict) -> Limits:
@@ -34,4 +36,5 @@ class Limits:
             mr_api_retry_max=int(data.get("mr_api_retry_max", cls.mr_api_retry_max)),
             backoff_base_s=float(data.get("backoff_base_s", cls.backoff_base_s)),
             backoff_max_s=float(data.get("backoff_max_s", cls.backoff_max_s)),
+            concurrency=int(data.get("concurrency", cls.concurrency)),
         )

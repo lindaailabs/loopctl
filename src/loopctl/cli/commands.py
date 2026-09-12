@@ -37,36 +37,53 @@ def register_commands(app: typer.Typer) -> None:
         requirement: str = typer.Argument(..., help="Natural-language requirement."),
         project: str = typer.Option(..., "--project", "-p", help="Registered project slug."),
         base: str = typer.Option(None, "--base", help="Base branch to branch from."),
-        fg: bool = typer.Option(False, "--fg", help="Run in the foreground (blocks until a gate)."),
+        fg: bool = typer.Option(
+            False,
+            "--fg",
+            help="Run in foreground (block until first gate).",
+        ),
         json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of text."),
     ) -> None:
-        """Create a task and run it through to the plan gate (or MR in background)."""
+        """Create a task. Without --fg it is queued for the background supervisor (SPEC §8 M3)."""
+        if fg:
+            try:
+                task_id = asyncio.run(scheduler.start(requirement, project, base))
+            except FileNotFoundError as exc:
+                typer.echo(f"error: {exc}", err=True)
+                raise typer.Exit(1) from None
+            task = scheduler.get_task(task_id)
+            if json_output:
+                _emit_json({"task_id": task_id, "state": task.state.value if task else None})
+                return
+            typer.echo(f"created task {task_id}")
+            if task is None:
+                return
+            if task.state is TaskState.awaiting_plan_approval:
+                if task.plan:
+                    typer.echo(f"plan:\n{task.plan.goal}")
+                typer.echo(
+                    "awaiting plan approval — run `loopctl approve <id>` or "
+                    "`loopctl reject <id> --feedback <text>`"
+                )
+            elif task.state is TaskState.escalated:
+                typer.echo(
+                    f"task escalated ({task.failure_class}); check `loopctl report {task_id}` "
+                    "or `loopctl resume {task_id}` after fixing the environment."
+                )
+            else:
+                typer.echo(f"state: {task.state.value}")
+            return
+
         try:
-            task_id = asyncio.run(scheduler.start(requirement, project, base))
+            task_id = scheduler.enqueue(requirement, project, base)
         except FileNotFoundError as exc:
             typer.echo(f"error: {exc}", err=True)
             raise typer.Exit(1) from None
-        task = scheduler.get_task(task_id)
         if json_output:
-            _emit_json({"task_id": task_id, "state": task.state.value})
+            _emit_json({"task_id": task_id, "state": "queued"})
             return
-        typer.echo(f"created task {task_id}")
-        if task is None:
-            return
-        if task.state is TaskState.awaiting_plan_approval:
-            if task.plan:
-                typer.echo(f"plan:\n{task.plan.goal}")
-            typer.echo(
-                "awaiting plan approval — run `loopctl approve <id>` or "
-                "`loopctl reject <id> --feedback <text>`"
-            )
-        elif task.state is TaskState.escalated:
-            typer.echo(
-                f"task escalated ({task.failure_class}); check `loopctl report {task_id}` "
-                "or `loopctl resume {task_id}` after fixing the environment."
-            )
-        else:
-            typer.echo(f"state: {task.state.value}")
+        typer.echo(f"queued task {task_id}")
+        typer.echo("run `loopctl serve` to execute (or `loopctl run ... --fg` for foreground)")
 
     @app.command()
     def status(
@@ -197,10 +214,25 @@ def register_commands(app: typer.Typer) -> None:
             typer.echo(line)
 
     @app.command()
+    def serve(
+        concurrency: int = typer.Option(
+            2, "--concurrency", help="Max concurrent tasks across projects."
+        ),
+        watch: bool = typer.Option(False, "--watch", help="Keep running and poll for new tasks."),
+        json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of text."),
+    ) -> None:
+        """Run the background supervisor: execute queued tasks (SPEC §8 M3)."""
+        executed = scheduler.serve(concurrency=concurrency, watch=watch)
+        if json_output:
+            _emit_json({"executed": executed})
+        else:
+            typer.echo(f"supervisor finished; executed {executed} task(s)")
+
+    @app.command()
     def stats(
         json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of a table."),
     ) -> None:
-        """Aggregate success rate, interventions and cost."""
+        """Aggregate success rate, interventions, cost and per-project breakdown."""
         summary = scheduler.stats_summary()
         if json_output:
             _emit_json(summary)
@@ -208,9 +240,28 @@ def register_commands(app: typer.Typer) -> None:
         table = Table(title="Stats")
         table.add_column("metric")
         table.add_column("value")
-        for key, value in summary.items():
-            table.add_row(key, str(value))
+        for key in ("total", "done", "escalated", "failed", "auto_to_mr", "success_rate"):
+            if key in summary:
+                table.add_row(key, str(summary[key]))
+        table.add_row("interventions", str(summary.get("interventions", 0)))
+        table.add_row("fix_loops", str(summary.get("fix_loops", 0)))
+        table.add_row("tokens", str(summary.get("tokens", 0)))
+        table.add_row("cost_usd", str(summary.get("cost_usd", 0.0)))
         console.print(table)
+        by_project = summary.get("by_project") or {}
+        if by_project:
+            pt = Table(title="By project")
+            for column in ("project", "total", "done", "escalated", "failed"):
+                pt.add_column(column)
+            for slug, counts in sorted(by_project.items()):
+                pt.add_row(
+                    slug,
+                    str(counts.get("total", 0)),
+                    str(counts.get("done", 0)),
+                    str(counts.get("escalated", 0)),
+                    str(counts.get("failed", 0)),
+                )
+            console.print(pt)
 
 
 def _echo_state(task_id: str, json_output: bool, message: str) -> None:

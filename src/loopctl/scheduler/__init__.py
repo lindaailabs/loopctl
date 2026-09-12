@@ -7,6 +7,7 @@ points that the CLI drives via `asyncio.run`.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +15,9 @@ from loopctl.config import paths
 from loopctl.config.loader import load_project
 from loopctl.graph.workflow import Workflow
 from loopctl.integrations.gitlab import GitLabClient
-from loopctl.models.task import Task
+from loopctl.knowledge.spec import load_spec
+from loopctl.models.task import Task, TaskState
+from loopctl.scheduler.runner import Supervisor, new_task_id
 from loopctl.store.db import TaskStore
 from loopctl.store.stats import aggregate
 
@@ -63,6 +66,28 @@ async def start(
     return await build(project_slug, engine=engine, notifier=notifier, gitlab=gitlab).start(
         requirement, base
     )
+
+
+def enqueue(requirement: str, project_slug: str, base: str | None = None) -> str:
+    """Register a task in the ``queued`` state for the background supervisor (SPEC §8 M3)."""
+    cfg = load_project(project_slug, root=paths.projects_root())
+    task = Task(
+        id=new_task_id(cfg.slug),
+        project=cfg.slug,
+        requirement=requirement,
+        base_branch=base or cfg.default_branch,
+        engine=cfg.engine,
+        state=TaskState.queued,
+        spec=load_spec(Path(cfg.repo_path or "."), cfg.spec_refs),
+    )
+    TaskStore(_db_path()).save(task)
+    return task.id
+
+
+def serve(*, concurrency: int = 2, watch: bool = False) -> int:
+    """Run the background supervisor until the queue is idle (or forever when watching)."""
+    sup = Supervisor(concurrency=concurrency)
+    return asyncio.run(sup.serve(stop_when_idle=not watch))
 
 
 async def approve(

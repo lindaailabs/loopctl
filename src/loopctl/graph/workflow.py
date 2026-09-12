@@ -88,6 +88,20 @@ class Workflow:
             await graph.ainvoke({"task": task.model_dump()}, self._config(task.id))
         return task.id
 
+    async def run_queued(self, task_id: str) -> None:
+        """Execute a previously enqueued (``queued``) task through to its first gate.
+
+        Used by the background supervisor (SPEC §8 M3); the task already exists in the
+        store with its requirement and spec populated.
+        """
+        task = self.store.get(task_id)
+        if task is None:
+            raise ValueError(f"unknown task: {task_id}")
+        task.state = TaskState.clarifying
+        self._persist(task, "dequeued")
+        async with self._compiled() as graph:
+            await graph.ainvoke({"task": task.model_dump()}, self._config(task_id))
+
     async def approve(self, task_id: str) -> None:
         await self._resume(task_id, {"action": "approve"})
 
