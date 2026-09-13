@@ -316,11 +316,10 @@ class Workflow:
         )
         title = f"[loopctl] {task.requirement[:60]}"
         workdir = Path(self.project.repo_path or ".")
-        # The coding agent writes files but does not always commit them, so the
-        # branch would otherwise be identical to base and GitHub rejects the PR
-        # with 422 "No commits between ...". Commit staged changes before pushing.
-        await self._git_commit(workdir, f"[loopctl] {task.id}: {task.requirement[:60]}")
         try:
+            await self._commit_engine_changes(
+                task, workdir, f"[loopctl] {task.id}: {task.requirement[:60]}"
+            )
             if self.project.provider == "github":
                 await self.github.push_branch(workdir=workdir, branch=branch, remote="origin")
                 mr = await self.github.open_mr(
@@ -339,7 +338,7 @@ class Workflow:
                     title=title,
                     description=description,
                 )
-        except (GitLabError, GitHubError) as exc:
+        except (EngineError, GitLabError, GitHubError) as exc:
             return self._fail(task, exc.kind)
         task.mr_url = mr.url
         task.state = TaskState.awaiting_pr_review
@@ -559,15 +558,30 @@ class Workflow:
             raise EngineError("environment_error", err.decode(errors="replace").strip())
         return out.decode(errors="replace")
 
-    async def _git_commit(self, workdir: Path, message: str) -> None:
-        """Stage all working-tree changes and commit them on the current branch.
+    async def _commit_engine_changes(self, task: Task, workdir: Path, message: str) -> None:
+        """Commit only the files the editing engine reported changing."""
+        if self.engine.name != "claude_code":
+            return
+        await self._git_commit(workdir, message, task.changed_files)
+
+    async def _git_commit(self, workdir: Path, message: str, changed_files: list[str]) -> None:
+        """Stage reported working-tree changes and commit them on the current branch.
 
         The coding agent (claude) produces file edits but frequently omits the
         commit, which would make the MR identical to base. We commit here so the
-        pushed branch actually diverges. No-op if there is nothing to stage.
+        pushed branch actually diverges. The path list comes from git status after
+        the engine run, which avoids sweeping unrelated runtime/user changes into
+        the MR.
         """
-        if not await self._git_ok(workdir, "add", "-A"):
-            raise GitHubError("api_error", "git add failed")
+        if not changed_files:
+            if (await self._git_output(workdir, "status", "--porcelain")).strip():
+                raise EngineError(
+                    "environment_error",
+                    "working tree changed but the engine did not report changed files",
+                )
+            return
+        if not await self._git_ok(workdir, "add", "--", *changed_files):
+            raise EngineError("environment_error", "git add failed")
         proc = await asyncio.create_subprocess_exec(
             "git",
             "-C",
@@ -595,7 +609,9 @@ class Workflow:
         )
         _, err = await commit.communicate()
         if commit.returncode != 0:
-            raise GitHubError("api_error", f"git commit failed: {err.decode(errors='replace').strip()}")
+            raise EngineError(
+                "environment_error", f"git commit failed: {err.decode(errors='replace').strip()}"
+            )
 
     def _write_report(self, task: Task, report: Any) -> Path | None:
         markdown = render_report_markdown(report, task)

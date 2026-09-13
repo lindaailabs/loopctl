@@ -142,13 +142,21 @@ class ClaudeCodeBackend:
                 "git",
                 "-C",
                 str(workdir),
-                "diff",
-                "--name-only",
-                "HEAD",
+                "status",
+                "--porcelain",
+                "--untracked-files=all",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
             )
             out, _ = await proc.communicate()
-            return [ln for ln in out.decode().splitlines() if ln.strip()]
+            changed: list[str] = []
+            for line in out.decode().splitlines():
+                if not line.strip():
+                    continue
+                path = line[3:]
+                if " -> " in path:
+                    path = path.rsplit(" -> ", 1)[1]
+                changed.append(path)
+            return changed
         except (OSError, ValueError):
             return []

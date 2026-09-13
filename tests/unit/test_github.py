@@ -141,7 +141,8 @@ def test_dry_run_returns_url() -> None:
     assert mr.url.startswith("dry-run://pull/")
 
 
-def test_validation_requires_github_credentials() -> None:
+def test_validation_requires_github_credentials(monkeypatch) -> None:
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     cfg = ProjectConfig(
         slug="gh",
         engine="claude_code",
