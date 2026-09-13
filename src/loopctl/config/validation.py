@@ -37,10 +37,16 @@ def runtime_issues(project: ProjectConfig) -> list[str]:
         issues.append("claude executable was not found on PATH")
     if shutil.which("git") is None:
         issues.append("git executable was not found on PATH")
-    if project.gitlab_project_id is None or project.gitlab_project_id <= 0:
-        issues.append("gitlab_project_id is required")
-    if not os.environ.get("GITLAB_TOKEN"):
-        issues.append("GITLAB_TOKEN is not configured")
+    if project.provider == "github":
+        if not project.github_repo:
+            issues.append("github_repo is required for provider=github")
+        if not os.environ.get("GITHUB_TOKEN"):
+            issues.append("GITHUB_TOKEN is not configured")
+    else:
+        if project.gitlab_project_id is None or project.gitlab_project_id <= 0:
+            issues.append("gitlab_project_id is required")
+        if not os.environ.get("GITLAB_TOKEN"):
+            issues.append("GITLAB_TOKEN is not configured")
     return issues
 
 

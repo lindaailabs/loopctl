@@ -7,6 +7,7 @@ from pathlib import Path
 
 from loopctl.engines.base import EngineError, EngineResult
 from loopctl.graph.workflow import Workflow
+from loopctl.integrations.github import GitHubError
 from loopctl.integrations.gitlab import GitLabError, MRInfo
 from loopctl.models.project import ProjectConfig
 from loopctl.models.task import TaskState
@@ -73,6 +74,27 @@ class FakeGitLab:
             raise GitLabError(self.fail_mr_with, "boom")
         return MRInfo(
             url=f"https://gl/-/merge_requests/{FakeGitLab.mr_calls}", iid=FakeGitLab.mr_calls
+        )
+
+
+class FakeGitHub:
+    name = "fake_github"
+    push_calls = 0
+    mr_calls = 0
+    fail_mr_with: str | None = None
+
+    def __init__(self, *, fail_mr_with: str | None = None) -> None:
+        self.fail_mr_with = fail_mr_with
+
+    async def push_branch(self, *, workdir, branch, remote="origin") -> None:
+        FakeGitHub.push_calls += 1
+
+    async def open_mr(self, *, repo, source_branch, target_branch, title, description) -> MRInfo:
+        FakeGitHub.mr_calls += 1
+        if self.fail_mr_with:
+            raise GitHubError(self.fail_mr_with, "boom")
+        return MRInfo(
+            url=f"https://gh.com/{repo}/pull/{FakeGitHub.mr_calls}", iid=FakeGitHub.mr_calls
         )
 
 
@@ -275,3 +297,58 @@ def test_engine_timeout_retry_exhausted(tmp_data_dir) -> None:
     task = wf.store.get(tid)
     assert task.state is TaskState.escalated
     assert task.failure_class == "engine_timeout"
+
+
+def _wf_github(tmp_data_dir: Path, *, fail_mr_with: str | None = None):
+    cfg = ProjectConfig(
+        slug="sample",
+        provider="github",
+        github_repo="lindaailabs/liganex",
+        test_cmd='python -c "pass"',
+        repo_path=str(tmp_data_dir),
+        spec_refs=["spec.md"],
+    )
+    eng = FakeEngine()
+    gh = FakeGitHub(fail_mr_with=fail_mr_with)
+    wf = Workflow(
+        project=cfg,
+        data_dir=tmp_data_dir,
+        db_path=tmp_data_dir / "db.sqlite",
+        engine=eng,
+        notifier=_noop_notify,
+        github=gh,
+    )
+    return wf, eng, gh
+
+
+def test_full_loop_github_reaches_done(tmp_data_dir) -> None:
+    wf, _, gh = _wf_github(tmp_data_dir)
+
+    async def go():
+        tid = await wf.start("add negative argument validation", None)
+        assert wf.store.get(tid).state is TaskState.awaiting_plan_approval
+        await wf.approve(tid)
+        assert wf.store.get(tid).state is TaskState.awaiting_pr_review
+        await wf.approve(tid)
+        return tid
+
+    tid = asyncio.run(go())
+    task = wf.store.get(tid)
+    assert task.state is TaskState.done
+    assert task.mr_url is not None
+    assert "liganex/pull" in task.mr_url
+    assert FakeGitHub.push_calls >= 1
+
+
+def test_github_api_error_escalates(tmp_data_dir) -> None:
+    wf, _, _ = _wf_github(tmp_data_dir, fail_mr_with="api_error")
+
+    async def go():
+        tid = await wf.start("do something", None)
+        await wf.approve(tid)
+        return tid
+
+    tid = asyncio.run(go())
+    task = wf.store.get(tid)
+    assert task.state is TaskState.escalated
+    assert task.failure_class == "api_error"

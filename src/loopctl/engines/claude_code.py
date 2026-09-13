@@ -29,6 +29,9 @@ class ClaudeCodeBackend:
             "--output-format",
             "stream-json",
             "--verbose",
+            # Headless automation must not block on interactive permission
+            # prompts, or the agent can "complete" without touching any files.
+            "--dangerously-skip-permissions",
         ]
         start = time.monotonic()
         last_output = [start]

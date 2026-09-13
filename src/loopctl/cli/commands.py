@@ -210,7 +210,7 @@ def register_commands(app: typer.Typer) -> None:
         task_id: str = typer.Argument(..., help="Task id."),
         json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of text."),
     ) -> None:
-        """Show the GitLab merge request URL for a task."""
+        """Show the merge/pull request URL for a task."""
         url = scheduler.mr_url(task_id)
         if url is None:
             typer.echo("no MR available yet", err=True)
@@ -330,7 +330,13 @@ def register_commands(app: typer.Typer) -> None:
         ),
         git_remote: str = typer.Option("", "--git-remote", help="Git remote URL."),
         gitlab_project_id: int | None = typer.Option(
-            None, "--gitlab-project-id", help="GitLab project id."
+            None, "--gitlab-project-id", help="GitLab project id (provider=gitlab)."
+        ),
+        provider: str = typer.Option(
+            "gitlab", "--provider", help="Repo host: 'gitlab' or 'github'."
+        ),
+        github_repo: str | None = typer.Option(
+            None, "--github-repo", help="owner/repo (required when --provider github)."
         ),
         default_branch: str = typer.Option("main", "--default-branch", help="Base branch."),
         test_cmd: str = typer.Option("", "--test-cmd", help="Command that runs the test suite."),
@@ -352,8 +358,10 @@ def register_commands(app: typer.Typer) -> None:
                 slug,
                 display_name=display_name,
                 engine=engine,
+                provider=provider,
                 git_remote=git_remote,
                 gitlab_project_id=gitlab_project_id,
+                github_repo=github_repo,
                 default_branch=default_branch,
                 test_cmd=test_cmd,
                 spec_refs=spec_refs or None,

@@ -17,8 +17,10 @@ class ProjectConfig(BaseModel):
     slug: str
     display_name: str = ""
     engine: str = "claude_code"
+    provider: str = "gitlab"  # "gitlab" | "github" — which host hosts the repo
     git_remote: str = ""
     gitlab_project_id: int | None = None
+    github_repo: str | None = None  # "owner/repo" when provider == "github"
     default_branch: str = "main"
     test_cmd: str = ""
     spec_refs: list[str] = Field(default_factory=list)
@@ -35,4 +37,11 @@ class ProjectConfig(BaseModel):
     def _check_slug(cls, value: str) -> str:
         if not SLUG_RE.match(value):
             raise ValueError(f"invalid slug '{value}': must match {SLUG_RE.pattern}")
+        return value
+
+    @field_validator("provider")
+    @classmethod
+    def _check_provider(cls, value: str) -> str:
+        if value not in ("gitlab", "github"):
+            raise ValueError(f"invalid provider '{value}': must be 'gitlab' or 'github'")
         return value

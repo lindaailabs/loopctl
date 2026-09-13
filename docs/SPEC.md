@@ -77,10 +77,10 @@ loopctl report <task-id>                        # 查看任务报告
 loopctl projects                                # 列出已注册项目
 loopctl stats                                   # 汇总：成功率/介入/成本/按项目
 loopctl resume <task-id>                        # 恢复中断/升级的任务
-loopctl init <slug> [--display-name] [--engine] [--git-remote] [--gitlab-project-id] [--default-branch] [--test-cmd] [--spec-refs ...] [--repo-path]   # 注册项目（M4；slug 为 [A-Za-z0-9_-]）
+loopctl init <slug> [--display-name] [--engine] [--provider gitlab|github] [--git-remote] [--gitlab-project-id] [--github-repo owner/repo] [--default-branch] [--test-cmd] [--spec-refs ...] [--repo-path]   # 注册项目（M4；slug 为 [A-Za-z0-9_-]）
 loopctl engines                                 # 列出已注册引擎及其实现状态（M4）
-loopctl doctor --project <slug>                 # 运行前检查路径、引擎、测试与 GitLab
-loopctl mr <task-id>                            # 查看任务对应的 GitLab MR url（M2）
+loopctl doctor --project <slug>                 # 运行前检查路径、引擎、测试与 GitLab/GitHub
+loopctl mr <task-id>                            # 查看任务对应的 GitLab MR / GitHub PR url（M2）
 loopctl serve [--concurrency N] [--watch]       # 后台监督器：执行队列中的任务（M3）
 ```
 
@@ -103,7 +103,7 @@ loopctl serve [--concurrency N] [--watch]       # 后台监督器：执行队列
 ├─ graph/        LangGraph 工作流：状态机、节点、gate（interrupt）
 ├─ engines/      执行引擎适配层：base 接口 + claude_code backend
 ├─ knowledge/    spec 加载、上下文组装、蒸馏、报告生成
-├─ integrations/ gitlab.py、notify.py
+├─ integrations/ gitlab.py、github.py、notify.py
 ├─ store/        SQLite、checkpointer 封装、trace 写入
 └─ models/       pydantic 数据模型（Task、Project、Plan、Report 等）
 ```
@@ -152,7 +152,7 @@ queued → clarifying → planning → awaiting_plan_approval
 | testing | test_cmd | 通过 / 失败详情 | 失败 → fixing 循环 |
 | fixing | 失败详情 | 修复性执行指令 | 超 3 轮 → escalated |
 | reporting | 全过程 trace | Report.md 写入 playbook | 写入失败 → 任务不失败，本地暂存并告警 |
-| creating_mr | 分支 + 报告 + spec 引用 | GitLab MR url | API 失败 → 退避重试 → escalated |
+| creating_mr | 分支 + 报告 + spec 引用 | GitLab MR url / GitHub PR url（按 provider） | API 失败 → 退避重试 → escalated |
 
 ### 5.3 失败分类与处置（无人值守可靠性的核心）
 
@@ -219,6 +219,9 @@ engine = "claude_code"
 git_remote = "git@gitlab.com:group/billing.git"
 gitlab_project_id = 12345
 default_branch = "main"
+# GitHub 托管的项目改用：
+# provider = "github"
+# github_repo = "owner/repo"
 test_cmd = "pytest -q"
 spec_refs = ["spec.md", "decisions/"]   # 相对 playbook/projects/<slug>/
 [limits]
@@ -327,4 +330,4 @@ Python ≥ 3.11 · uv · asyncio · typer + rich · langgraph（含 SqliteSaver 
 
 - 工具仓库（loopctl）与知识仓库（playbook）的根目录：本机自定，作为运行时配置，不进仓库。
 - 依赖：本机需安装 `claude` CLI（headless 调用）。
-- 密钥：`GITLAB_TOKEN`、`NTFY_URL` 走环境变量，不进仓库。
+- 密钥：`GITLAB_TOKEN` / `GITHUB_TOKEN`、`NTFY_URL` 走环境变量，不进仓库。

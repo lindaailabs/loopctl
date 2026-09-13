@@ -60,8 +60,10 @@ def load_project(
         slug=data["slug"],
         display_name=data.get("display_name", data["slug"]),
         engine=data.get("engine", "claude_code"),
+        provider=data.get("provider", "gitlab"),
         git_remote=data.get("git_remote", ""),
         gitlab_project_id=data.get("gitlab_project_id"),
+        github_repo=data.get("github_repo"),
         default_branch=data.get("default_branch", "main"),
         test_cmd=data.get("test_cmd", ""),
         spec_refs=list(data.get("spec_refs", [])),
@@ -93,8 +95,10 @@ def write_project(
     *,
     display_name: str | None = None,
     engine: str = "claude_code",
+    provider: str = "gitlab",
     git_remote: str = "",
     gitlab_project_id: int | None = None,
+    github_repo: str | None = None,
     default_branch: str = "main",
     test_cmd: str = "",
     spec_refs: list[str] | None = None,
@@ -114,6 +118,8 @@ def write_project(
         raise ValueError(
             f"unknown engine '{engine}'; known engines: {', '.join(sorted(ENGINE_REGISTRY))}"
         )
+    if provider not in ("gitlab", "github"):
+        raise ValueError(f"unknown provider '{provider}'; expected 'gitlab' or 'github'")
 
     root = root or Path.cwd() / "playbook" / "projects"
     local_dir = local_dir or local_projects_dir()
@@ -129,8 +135,10 @@ def write_project(
             slug=slug,
             display_name=display_name or slug,
             engine=engine,
+            provider=provider,
             git_remote=git_remote,
             gitlab_project_id=gitlab_project_id,
+            github_repo=github_repo,
             default_branch=default_branch,
             test_cmd=test_cmd,
             spec_refs=spec_refs,
@@ -160,8 +168,10 @@ def _render_project_toml(
     slug: str,
     display_name: str,
     engine: str,
+    provider: str,
     git_remote: str,
     gitlab_project_id: int | None,
+    github_repo: str | None,
     default_branch: str,
     test_cmd: str,
     spec_refs: list[str],
@@ -171,10 +181,14 @@ def _render_project_toml(
         f'display_name = "{display_name}"',
         f'engine = "{engine}"',
     ]
+    if provider != "gitlab":
+        lines.append(f'provider = "{provider}"')
     if git_remote:
         lines.append(f'git_remote = "{git_remote}"')
     if gitlab_project_id is not None:
         lines.append(f"gitlab_project_id = {gitlab_project_id}")
+    if github_repo:
+        lines.append(f'github_repo = "{github_repo}"')
     lines.append(f'default_branch = "{default_branch}"')
     if test_cmd:
         lines.append(f'test_cmd = "{test_cmd}"')

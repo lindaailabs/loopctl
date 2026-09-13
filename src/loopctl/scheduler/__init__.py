@@ -17,6 +17,7 @@ from loopctl.config import paths
 from loopctl.config.loader import load_project
 from loopctl.config.validation import require_runtime, runtime_issues
 from loopctl.graph.workflow import Workflow
+from loopctl.integrations.github import GitHubClient
 from loopctl.integrations.gitlab import GitLabClient
 from loopctl.knowledge.spec import load_spec
 from loopctl.models.task import Task, TaskState
@@ -35,9 +36,10 @@ def build(
     engine=None,
     notifier=None,
     gitlab: GitLabClient | None = None,
+    github: GitHubClient | None = None,
 ) -> Workflow:
     cfg = load_project(project_slug, root=paths.projects_root())
-    if engine is None and gitlab is None:
+    if engine is None and gitlab is None and github is None:
         require_runtime(cfg)
     return Workflow(
         project=cfg,
@@ -46,18 +48,24 @@ def build(
         engine=engine,
         notifier=notifier,
         gitlab=gitlab,
+        github=github,
         runs_dir=paths.runs_root(),
     )
 
 
 def _workflow_for_task(
-    task_id: str, *, engine=None, notifier=None, gitlab: GitLabClient | None = None
+    task_id: str,
+    *,
+    engine=None,
+    notifier=None,
+    gitlab: GitLabClient | None = None,
+    github: GitHubClient | None = None,
 ) -> Workflow:
     with TaskStore(_db_path()) as store:
         task = store.get(task_id)
     if task is None:
         raise ValueError(f"unknown task: {task_id}")
-    return build(task.project, engine=engine, notifier=notifier, gitlab=gitlab)
+    return build(task.project, engine=engine, notifier=notifier, gitlab=gitlab, github=github)
 
 
 async def start(
@@ -69,10 +77,11 @@ async def start(
     engine=None,
     notifier=None,
     gitlab: GitLabClient | None = None,
+    github: GitHubClient | None = None,
 ) -> str:
-    return await build(project_slug, engine=engine, notifier=notifier, gitlab=gitlab).start(
-        requirement, base, branch_name=branch_name
-    )
+    return await build(
+        project_slug, engine=engine, notifier=notifier, gitlab=gitlab, github=github
+    ).start(requirement, base, branch_name=branch_name)
 
 
 def enqueue(
@@ -107,33 +116,49 @@ def serve(*, concurrency: int = 2, watch: bool = False) -> int:
 
 
 async def approve(
-    task_id: str, *, engine=None, notifier=None, gitlab: GitLabClient | None = None
+    task_id: str,
+    *,
+    engine=None,
+    notifier=None,
+    gitlab: GitLabClient | None = None,
+    github: GitHubClient | None = None,
 ) -> None:
     task = get_task(task_id)
     if task is None:
         raise ValueError(f"unknown task: {task_id}")
     if task.state not in {TaskState.awaiting_plan_approval, TaskState.awaiting_pr_review}:
         raise ValueError(f"task {task_id} cannot be approved from state {task.state.value}")
-    await _workflow_for_task(task_id, engine=engine, notifier=notifier, gitlab=gitlab).approve(
-        task_id
-    )
+    await _workflow_for_task(
+        task_id, engine=engine, notifier=notifier, gitlab=gitlab, github=github
+    ).approve(task_id)
 
 
 async def reject(
-    task_id: str, feedback: str, *, engine=None, notifier=None, gitlab: GitLabClient | None = None
+    task_id: str,
+    feedback: str,
+    *,
+    engine=None,
+    notifier=None,
+    gitlab: GitLabClient | None = None,
+    github: GitHubClient | None = None,
 ) -> None:
     task = get_task(task_id)
     if task is None:
         raise ValueError(f"unknown task: {task_id}")
     if task.state is not TaskState.awaiting_plan_approval:
         raise ValueError(f"task {task_id} cannot be rejected from state {task.state.value}")
-    await _workflow_for_task(task_id, engine=engine, notifier=notifier, gitlab=gitlab).reject(
-        task_id, feedback
-    )
+    await _workflow_for_task(
+        task_id, engine=engine, notifier=notifier, gitlab=gitlab, github=github
+    ).reject(task_id, feedback)
 
 
 async def resume(
-    task_id: str, *, engine=None, notifier=None, gitlab: GitLabClient | None = None
+    task_id: str,
+    *,
+    engine=None,
+    notifier=None,
+    gitlab: GitLabClient | None = None,
+    github: GitHubClient | None = None,
 ) -> None:
     task = get_task(task_id)
     if task is None:
@@ -144,9 +169,9 @@ async def resume(
         TaskState.escalated,
     }:
         raise ValueError(f"task {task_id} cannot be resumed from state {task.state.value}")
-    await _workflow_for_task(task_id, engine=engine, notifier=notifier, gitlab=gitlab).resume(
-        task_id
-    )
+    await _workflow_for_task(
+        task_id, engine=engine, notifier=notifier, gitlab=gitlab, github=github
+    ).resume(task_id)
 
 
 def list_tasks() -> list[Task]:

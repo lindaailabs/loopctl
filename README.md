@@ -36,6 +36,19 @@ uv run loopctl init my-project --repo-path /path/to/repo \
   --test-cmd "pytest -q" --gitlab-project-id 12345
 uv run loopctl doctor --project my-project
 
+# Or register a GitHub-hosted project (PR instead of MR)
+uv run loopctl init my-project --repo-path /path/to/repo \
+  --provider github --github-repo owner/repo --test-cmd "pytest -q"
+# Set GITHUB_TOKEN before a real GitHub run (same dry-run/offline rules apply).
+
+### End-to-end GitHub PR demo
+
+loopctl can drive a GitHub-hosted project end to end and open a real pull
+request. The screenshot below shows a PR that loopctl's autonomous pipeline
+generated and pushed for the `liganex` project:
+
+![loopctl-generated GitHub PR (liganex/pull/1)](docs/assets/screenshots/loopctl-pr-ai-video-canvas.png)
+
 # List the available execution engines
 uv run loopctl engines
 ```

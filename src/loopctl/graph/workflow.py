@@ -27,6 +27,12 @@ from loopctl.config.loader import load_project
 from loopctl.engines import get_engine
 from loopctl.engines.base import EngineBackend, EngineContext, EngineError
 from loopctl.graph.state import GraphState
+from loopctl.integrations.github import (
+    DryRunGitHubClient,
+    GitHubClient,
+    GitHubError,
+    HttpGitHubClient,
+)
 from loopctl.integrations.gitlab import (
     DryRunGitLabClient,
     GitLabClient,
@@ -61,6 +67,7 @@ class Workflow:
         engine: EngineBackend | None = None,
         notifier: Notifier | None = None,
         gitlab: GitLabClient | None = None,
+        github: GitHubClient | None = None,
         runs_dir: Path | None = None,
     ) -> None:
         self.project = project
@@ -68,10 +75,20 @@ class Workflow:
         self.db_path = db_path
         self.engine: EngineBackend = engine or get_engine(self.project.engine)
         self.notifier: Notifier = notifier or ntfy_notify
+        fake = self.engine.name == "fake"
         self.gitlab: GitLabClient = gitlab or (
             DryRunGitLabClient()
-            if self.engine.name == "fake"
+            if fake
             else HttpGitLabClient(
+                retry_max=project.limits.mr_api_retry_max,
+                backoff_base_s=project.limits.backoff_base_s,
+                backoff_max_s=project.limits.backoff_max_s,
+            )
+        )
+        self.github: GitHubClient = github or (
+            DryRunGitHubClient()
+            if fake
+            else HttpGitHubClient(
                 retry_max=project.limits.mr_api_retry_max,
                 backoff_base_s=project.limits.backoff_base_s,
                 backoff_max_s=project.limits.backoff_max_s,
@@ -298,18 +315,31 @@ class Workflow:
             plan_goal=plan_goal, report_summary=summary, spec_refs=self.project.spec_refs
         )
         title = f"[loopctl] {task.requirement[:60]}"
+        workdir = Path(self.project.repo_path or ".")
+        # The coding agent writes files but does not always commit them, so the
+        # branch would otherwise be identical to base and GitHub rejects the PR
+        # with 422 "No commits between ...". Commit staged changes before pushing.
+        await self._git_commit(workdir, f"[loopctl] {task.id}: {task.requirement[:60]}")
         try:
-            await self.gitlab.push_branch(
-                workdir=Path(self.project.repo_path or "."), branch=branch, remote="origin"
-            )
-            mr = await self.gitlab.open_mr(
-                project_id=self.project.gitlab_project_id or 0,
-                source_branch=branch,
-                target_branch=task.base_branch,
-                title=title,
-                description=description,
-            )
-        except GitLabError as exc:
+            if self.project.provider == "github":
+                await self.github.push_branch(workdir=workdir, branch=branch, remote="origin")
+                mr = await self.github.open_mr(
+                    repo=self.project.github_repo or "",
+                    source_branch=branch,
+                    target_branch=task.base_branch,
+                    title=title,
+                    description=description,
+                )
+            else:
+                await self.gitlab.push_branch(workdir=workdir, branch=branch, remote="origin")
+                mr = await self.gitlab.open_mr(
+                    project_id=self.project.gitlab_project_id or 0,
+                    source_branch=branch,
+                    target_branch=task.base_branch,
+                    title=title,
+                    description=description,
+                )
+        except (GitLabError, GitHubError) as exc:
             return self._fail(task, exc.kind)
         task.mr_url = mr.url
         task.state = TaskState.awaiting_pr_review
@@ -529,6 +559,44 @@ class Workflow:
             raise EngineError("environment_error", err.decode(errors="replace").strip())
         return out.decode(errors="replace")
 
+    async def _git_commit(self, workdir: Path, message: str) -> None:
+        """Stage all working-tree changes and commit them on the current branch.
+
+        The coding agent (claude) produces file edits but frequently omits the
+        commit, which would make the MR identical to base. We commit here so the
+        pushed branch actually diverges. No-op if there is nothing to stage.
+        """
+        if not await self._git_ok(workdir, "add", "-A"):
+            raise GitHubError("api_error", "git add failed")
+        proc = await asyncio.create_subprocess_exec(
+            "git",
+            "-C",
+            str(workdir),
+            "diff",
+            "--cached",
+            "--quiet",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await proc.communicate()
+        if proc.returncode == 0:
+            # Nothing staged: nothing to commit.
+            return
+        commit = await asyncio.create_subprocess_exec(
+            "git",
+            "-C",
+            str(workdir),
+            "commit",
+            "--no-gpg-sign",
+            "-m",
+            message,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, err = await commit.communicate()
+        if commit.returncode != 0:
+            raise GitHubError("api_error", f"git commit failed: {err.decode(errors='replace').strip()}")
+
     def _write_report(self, task: Task, report: Any) -> Path | None:
         markdown = render_report_markdown(report, task)
         day = datetime.now().astimezone().date().isoformat()
@@ -589,6 +657,7 @@ def build_workflow(
     engine: EngineBackend | None = None,
     notifier: Notifier | None = None,
     gitlab: GitLabClient | None = None,
+    github: GitHubClient | None = None,
 ) -> Workflow:
     """Construct a Workflow, loading the project configuration from disk."""
     cfg = load_project(project_slug, root=projects_root)
@@ -599,4 +668,5 @@ def build_workflow(
         engine=engine,
         notifier=notifier,
         gitlab=gitlab,
+        github=github,
     )
