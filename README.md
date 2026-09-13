@@ -41,6 +41,10 @@ uv run loopctl init my-project --repo-path /path/to/repo \
   --provider github --github-repo owner/repo --test-cmd "pytest -q"
 # Set GITHUB_TOKEN before a real GitHub run (same dry-run/offline rules apply).
 
+# List the available execution engines
+uv run loopctl engines
+```
+
 ### End-to-end GitHub PR demo
 
 loopctl can drive a GitHub-hosted project end to end and open a real pull
@@ -48,10 +52,6 @@ request. The screenshot below shows a PR that loopctl's autonomous pipeline
 generated and pushed for the `liganex` project:
 
 ![loopctl-generated GitHub PR (liganex/pull/1)](docs/assets/screenshots/loopctl-pr-ai-video-canvas.png)
-
-# List the available execution engines
-uv run loopctl engines
-```
 
 For a first, fully offline verification, initialize with `--engine fake`. The
 fake engine and dry-run MR client exercise both approval gates without touching
